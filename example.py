@@ -10,6 +10,7 @@ from osext.libaqnetutil.EdgeMachine import EdgeMachine, Network, Listener
 ### 서버 예시 ###
 # 인증 서버 예시
 Server_Authentication.setup(
+    namespace = "master",            # 인증 서버가 속할 네임스페이스 이름 (예: "master")
     port = 8000,                     # 인증 서버가 사용할 포트 번호
     domain = "example.com",          # 인증 서버의 도메인 이름. 이 때 Authentication 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "authentication",    # 인증 서버의 서브도메인 이름
@@ -31,16 +32,8 @@ Server_Authentication.setup(
         }
     },
     db_model = {
-        "protocol": "json",          # 인증 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
-        "file_path": "auth_db.json", # 데이터베이스 모델이 파일 기반인 경우 사용할 파일 경로
-        "connection_info": {         # 데이터베이스 모델이 네트워크 기반인 경우 사용할 연결 정보 (예: 호스트, 포트, 사용자명, 비밀번호 등)
-            "host": "localhost",
-            "port": 3306,
-            "user": "auth_user",
-            "password": "auth_password",
-            "database": "auth_db"
-        }
+        "db_path": "auth_db.db",     # 데이터베이스 모델이 파일 기반인 경우 사용할 데이터베이스 파일 경로 (예: "auth_db.sqlite")
     }
 )
 Server_Authentication.init()  # 인증 서버 초기화 (필수)
@@ -49,6 +42,7 @@ Server_Authentication.start() # 인증 서버 시작 (필수)
 
 # 홀드 서버 예시
 Server_Hold.setup(
+    namespace = "master",            # 홀드 서버가 속할 네임스페이스 이름 (예: "master")
     port = 8001,                     # 홀드 서버가 사용할 포트 번호
     domain = "example.com",          # 홀드 서버의 도메인 이름. 이 때 Hold 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "hold",              # 홀드 서버의 서브도메인 이름
@@ -70,16 +64,8 @@ Server_Hold.setup(
         }
     },
     db_model = {
-        "protocol": "json",          # 홀드 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
-        "file_path": "hold_db.json", # 데이터베이스 모델이 파일 기반인 경우 사용할 파일 경로
-        "connection_info": {         # 데이터베이스 모델이 네트워크 기반인 경우 사용할 연결 정보 (예: 호스트, 포트, 사용자명, 비밀번호 등)
-            "host": "localhost",
-            "port": 3306,
-            "user": "hold_user",
-            "password": "hold_password",
-            "database": "hold_db"
-        }
+        "db_path": "hold_db.db",     # 데이터베이스 모델이 파일 기반인 경우 사용할 데이터베이스 파일 경로 (예: "hold_db.sqlite")
     }
 )
 
@@ -88,6 +74,7 @@ Server_Hold.start() # 홀드 서버 시작 (필수)
 
 # 릴레이 서버 예시
 Server_Relay.setup(
+    namespace = "master",            # 릴레이 서버가 속할 네임스페이스 이름 (예: "master")
     port = 8002,                     # 릴레이 서버가 사용할 포트 번호
     domain = "example.com",          # 릴레이 서버의 도메인 이름. 이 때 Relay 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "relay",            # 릴레이 서버의 서브도메인 이름
@@ -109,16 +96,8 @@ Server_Relay.setup(
         }
     },
     db_model = {
-        "protocol": "json",          # 릴레이 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
-        "file_path": "relay_db.json", # 데이터베이스 모델이 파일 기반인 경우 사용할 파일 경로
-        "connection_info": {         # 데이터베이스 모델이 네트워크 기반인 경우 사용할 연결 정보 (예: 호스트, 포트, 사용자명, 비밀번호 등)
-            "host": "localhost",
-            "port": 3306,
-            "user": "relay_user",
-            "password": "relay_password",
-            "database": "relay_db"
-        }
+        "db_path": "relay_db.db",     # 데이터베이스 모델이 파일 기반인 경우 사용할 데이터베이스 파일 경로 (예: "relay_db.sqlite")
     }
 )
 
