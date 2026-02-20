@@ -1,6 +1,6 @@
 
 # 서버 관련 라이브러리 가져오기
-from osext.libaqnetutil import Authentication, Relay
+from osext.libaqnetutil import Server_Authentication, Server_Hold, Server_Relay
 
 # EdgeMachine 관련 라이브러리 가져오기
 from osext.libaqnetutil.EdgeMachine import EdgeMachine, Network, Listener
@@ -9,7 +9,7 @@ from osext.libaqnetutil.EdgeMachine import EdgeMachine, Network, Listener
 
 ### 서버 예시 ###
 # 인증 서버 예시
-Authentication.setup(
+Server_Authentication.setup(
     port = 8000,                     # 인증 서버가 사용할 포트 번호
     domain = "example.com",          # 인증 서버의 도메인 이름. 이 때 Authentication 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "authentication",    # 인증 서버의 서브도메인 이름
@@ -29,12 +29,12 @@ Authentication.setup(
         }
     }
 )
-Authentication.init()  # 인증 서버 초기화 (필수)
-Authentication.start() # 인증 서버 시작 (필수)
+Server_Authentication.init()  # 인증 서버 초기화 (필수)
+Server_Authentication.start() # 인증 서버 시작 (필수)
 
 
 # 홀드 서버 예시
-Hold.setup(
+Server_Hold.setup(
     port = 8001,                     # 홀드 서버가 사용할 포트 번호
     domain = "example.com",          # 홀드 서버의 도메인 이름. 이 때 Hold 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "hold",              # 홀드 서버의 서브도메인 이름
@@ -55,11 +55,11 @@ Hold.setup(
     }
 )
 
-Hold.init()  # 홀드 서버 초기화 (필수)
-Hold.start() # 홀드 서버 시작 (필수)
+Server_Hold.init()  # 홀드 서버 초기화 (필수)
+Server_Hold.start() # 홀드 서버 시작 (필수)
 
 # 릴레이 서버 예시
-Relay.setup(
+Server_Relay.setup(
     port = 8002,                     # 릴레이 서버가 사용할 포트 번호
     domain = "example.com",          # 릴레이 서버의 도메인 이름. 이 때 Relay 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
     subdomain = "relay",            # 릴레이 서버의 서브도메인 이름
@@ -80,8 +80,8 @@ Relay.setup(
     }
 )
 
-Relay.init()  # 릴레이 서버 초기화 (필수)
-Relay.start() # 릴레이 서버 시작 (필수)
+Server_Relay.init()  # 릴레이 서버 초기화 (필수)
+Server_Relay.start() # 릴레이 서버 시작 (필수)
 
 
 ### EdgeMachine 송신 예시 ###
