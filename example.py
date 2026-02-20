@@ -129,12 +129,19 @@ is_successful: dict[str, bool] = current_network.send_to_machines(current_networ
 Listener.open_ws_connection_to_relay(
     relay_url = "relay.example.com", # 연결할 릴레이 서버의 URL (예: "relay.example.com")
     port = 8080,                     # 연결할 릴레이 서버의 포트 번호 (예: 8002)
-    current_machine = current_machine # 현재 장치 인스턴스 (예: current_machine)
+    current_machine = current_machine, # 현재 장치 인스턴스 (예: current_machine)
+    file_mapping = {                      # 수신한 명령에서 파일 경로를 매핑할 때 사용할 매핑 정보 (예: {"user-picture": "/home/user/Pictures/profile.jpg"})
+        "user-picture": "/home/user/Pictures/profile.jpg"
+    }
 )
 
 # Probe 모드로 릴레이 서버와 연결하여 명령 수신 대기
 Listener.start_polling_listener(
     relay_url = "relay.example.com", # 연결할 릴레이 서버의 URL (
     port = 8080,                     # 연결할 릴레이 서버의 포트 번호 (예: 8002)
-    current_machine = current_machine # 현재 장치 인스턴스 (예: current_machine
+    current_machine = current_machine, # 현재 장치 인스턴스 (예: current_machine
+    file_mapping = {                      # 수신한 명령에서 파일 경로를 매핑할 때 사용할 매핑 정보 (예: {"user-picture": "/home/user/Pictures/profile.jpg"})
+        "user-picture": "/home/user/Pictures/profile.jpg"
+    },
+    interval = 5                          # 명령 수신을 체크하는 간격 (초 단위, 예: 5)
 )

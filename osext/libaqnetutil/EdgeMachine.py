@@ -286,11 +286,11 @@ class Listener:
 
     ## WS 모드
     @classmethod
-    def open_ws_connection_to_relay(cls, relay_url: str, port: int, current_machine: EdgeMachine):
+    def open_ws_connection_to_relay(cls, relay_url: str, port: int, current_machine: EdgeMachine, file_mapping: dict[str, str]):
         pass
 
     ## Polling 모드
     @classmethod
-    def start_polling_listener(cls, relay_url: str, port: int, current_machine: EdgeMachine):
+    def start_polling_listener(cls, relay_url: str, port: int, current_machine: EdgeMachine, file_mapping: dict[str, str], interval: int = 30):
         pass
 
