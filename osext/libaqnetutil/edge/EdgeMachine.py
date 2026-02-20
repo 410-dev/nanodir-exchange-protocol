@@ -289,7 +289,8 @@ class Network:
         # 파일을 바이너리 데이터로 읽어서 요청 본문에 포함
         try:
             f_uploader: SecureFileUploader = SecureFileUploader(f"{network.relay_server}:{network.relay_server_port}")
-            return f_uploader.mk_file_request(endpoint, header, target.pk, identity.generate_jwt(), file_path, start_from=0)
+            state, message, start_from = f_uploader.mk_file_request(endpoint, header, target.pk, identity.generate_jwt(), file_path, start_from=0)
+            return state
         except Exception as e:
             print(f"Error sending file to machine {target.get_machine_fullname()}: {e}")
             return False
