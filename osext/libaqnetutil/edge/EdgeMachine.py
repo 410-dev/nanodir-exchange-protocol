@@ -307,7 +307,7 @@ class Network:
     # 단일 장치에 파일을 직접 보내는 인스턴스 메서드 (릴레이 서버를 거치지 않고 직접 통신)
     def direct_send_to_machine(self, machine: EdgeMachine, port: int, file_path: str) -> bool:
         # TODO
-        pass
+        return False
 
 
 
