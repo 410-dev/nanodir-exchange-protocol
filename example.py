@@ -16,6 +16,20 @@ Server_Authentication.setup(
     allow_ip_access = False,         # 인증 서버에 IP 주소로 접근을 허용할지 여부 (True: IP 주소 허용, False: IP 주소로 접근 불허)
     allow_external_access = True,    # 인증 서버에 외부 네트워크에서 접근을 허용할지 여부 (True: 외부 네트워크 허용, False: 내부 네트워크로만 접근 허용)
     policy_file = "auth_policy.json",# 인증 서버가 사용할 정책 파일 경로 (예: "auth_policy.json")
+    server_map = {
+        "authentication": {
+            "url": "authentication.example.com", # 인증 서버의 URL (예: "authentication.example.com")
+            "port": 8000                         # 인증 서버의 포트 번호 (예:
+        },
+        "hold": {
+            "url": "hold.example.com",           # 홀드 서버의 URL (예: "hold.example.com")
+            "port": 8001                         # 홀드 서버의 포트 번호 (예: 8001)
+        },
+        "relay": {
+            "url": "relay.example.com",          # 릴레이 서버의 URL (예
+            "port": 8002                         # 릴레이 서버의 포트 번호 (예: 8002)
+        }
+    },
     db_model = {
         "protocol": "json",          # 인증 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
@@ -41,6 +55,20 @@ Server_Hold.setup(
     allow_ip_access = False,         # 홀드 서버에 IP 주소로 접근을 허용할지 여부 (True: IP 주소 허용, False: IP 주소로 접근 불허)
     allow_external_access = True,    # 홀드 서버에 외부 네트워크에서 접근을 허용할지 여부 (True: 외부 네트워크 허용, False: 내부 네트워크로만 접근 허용)
     policy_file = "hold_policy.json",# 홀드 서버가 사용할 정책 파일 경로 (예: "hold_policy.json")
+    server_map = {
+        "authentication": {
+            "url": "authentication.example.com", # 인증 서버의 URL (예: "authentication.example.com")
+            "port": 8000                         # 인증 서버의 포트 번호 (예:
+        },
+        "hold": {
+            "url": "hold.example.com",           # 홀드 서버의 URL (예: "hold.example.com")
+            "port": 8001                         # 홀드 서버의 포트 번호 (예: 8001)
+        },
+        "relay": {
+            "url": "relay.example.com",          # 릴레이 서버의 URL (예
+            "port": 8002                         # 릴레이 서버의 포트 번호 (예: 8002)
+        }
+    },
     db_model = {
         "protocol": "json",          # 홀드 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
@@ -66,6 +94,20 @@ Server_Relay.setup(
     allow_ip_access = False,         # 릴레이 서버에 IP 주소로 접근을 허용할지 여부 (True: IP 주소 허용, False: IP 주소로 접근 불허)
     allow_external_access = True,    # 릴레이 서버에 외부 네트워크에서 접근을 허용할지 여부 (True: 외부 네트워크 허용, False: 내부 네트워크로만 접근 허용)
     policy_file = "relay_policy.json",# 릴레이 서버가 사용할 정책 파일 경로 (예: "relay_policy.json")
+    server_map = {
+        "authentication": {
+            "url": "authentication.example.com", # 인증 서버의 URL (예: "authentication.example.com")
+            "port": 8000                         # 인증 서버의 포트 번호 (예:
+        },
+        "hold": {
+            "url": "hold.example.com",           # 홀드 서버의 URL (예: "hold.example.com")
+            "port": 8001                         # 홀드 서버의 포트 번호 (예: 8001)
+        },
+        "relay": {
+            "url": "relay.example.com",          # 릴레이 서버의 URL (예
+            "port": 8002                         # 릴레이 서버의 포트 번호 (예: 8002)
+        }
+    },
     db_model = {
         "protocol": "json",          # 릴레이 서버가 사용할 데이터베이스 모델 (예: "json", "sqlite", "mariadb" 중 택 1)
         "version": 1,                # 데이터베이스 모델의 버전 (예: 1)
