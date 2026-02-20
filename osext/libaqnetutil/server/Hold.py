@@ -32,6 +32,7 @@ def load_private_key():
         with open(PRIVATE_KEY_PATH, "rb") as key_file:
             return serialization.load_pem_private_key(
                 key_file.read(),
+                password=None
             )
     except Exception as e:
         logger.error(f"Failed to load RSA private key: {e}")
@@ -147,14 +148,16 @@ async def upload_secure_chunk(
         request: Request,
         x_chunk_index: int = Header(...),
         x_total_chunks: int = Header(...),
-        x_original_filename: str = Header(...),
-        x_file_sha256: str = Header(...),
+        x_original_filename: str = Header(None),
+        x_file_sha256: str = Header(None),
+        x_session_id: str = Header(None),
+        x_destination_h: str = Header(None),
         token: str = Depends(verify_jwt)
 ):
     """
     Async endpoint to read the network stream, offloading the heavy crypto to a thread.
     """
-    safe_dest = sanitize_filename(dest)
+    safe_dest = sanitize_filename(f"{x_session_id}@{x_destination_h}")
     target_file_path = UPLOAD_DIR / safe_dest
     staging_dir = UPLOAD_DIR / f".staging_{safe_dest}"
     staging_dir.mkdir(parents=True, exist_ok=True)
