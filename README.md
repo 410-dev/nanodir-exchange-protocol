@@ -17,16 +17,14 @@ from osext.libaqnetutil.EdgeMachine import EdgeMachine, Network
 current_machine: EdgeMachine = EdgeMachine.get_current_machine("master")  # 현재 장치 인스턴스 가져오기
 current_network: Network = current_machine.get_network_instance("master") # 현재 장치에 등록된 네트워크 인스턴스 가져오기 (네트워크 실존 여부 체크 안함)
 
-# Check if network is not enrolled.
-# If so, the code should not work.
-
+# 네트워크에 등록되어 있는지 체크하기
 if not current_network.is_machine_enrolled(current_machine): raise Exception("Not enrolled to network!")
 
-# Get machine ID of machine name for john@mycompany.com
+# john@mycompany.com 소유의 장치 목록 불러오기
 multiple_target_machines: list[EdgeMachine] = current_network.get_machines_of(current_machine, "Engineering/Developers", "john@mycompany.com")
 
-# Send to all machines
-is_successful: dict[str, bool] = current_network.send_to_machines(current_network, multiple_target_machines, 8080, "/home/user/Desktop/my-file.txt")
+# 해당 장치에 모두 파일 전송하기
+is_successful: dict[str, bool] = current_network.relay_send_to_machines(current_network, multiple_target_machines, 8080, "/home/user/Desktop/my-file.txt")
 
 ```
 

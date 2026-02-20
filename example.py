@@ -120,7 +120,7 @@ if not current_network.is_machine_enrolled(current_machine): raise Exception("No
 multiple_target_machines: list[EdgeMachine] = current_network.get_machines_of(current_machine, "Engineering/Developers", "john@mycompany.com")
 
 # Send to all machines
-is_successful: dict[str, bool] = current_network.send_to_machines(current_network, multiple_target_machines, 8080, "/home/user/Desktop/my-file.txt")
+is_successful: dict[str, bool] = current_network.relay_send_to_machines(current_network, multiple_target_machines, 8080, "/home/user/Desktop/my-file.txt")
 
 
 ### EdgeMachine 수신 예시 ###
