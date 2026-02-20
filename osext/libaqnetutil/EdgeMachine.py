@@ -1,38 +1,9 @@
-import platform
 import os
 import jwt
 import requests
 
 from SecureFileUploader import SecureFileUploader
-
-def _os_specific(nt ="", linux ="", mac ="", aqua ="") -> str:
-    os_type = platform.system()
-    if os_type == "Windows":
-        return nt
-
-    elif os_type == "Linux":
-        # AquariusOS 인지 체크한 후, 해당 OS인 경우 aqua 반환
-        if os.path.exists("/etc/aqua.txt"):
-            return aqua
-
-        # 그렇지 않은 일반적인 리눅스인 경우 linux 반환
-        return linux
-
-    elif os_type == "Darwin":
-        return mac
-
-    else:
-        raise Exception("Unknown OS") # 예상치 못한 OS인 경우 예외 처리
-
-def _read_file(file_path: str, default = "") -> str:
-    try:
-        if not os.path.exists(file_path):
-            return default
-        with open(file_path, "r") as f:
-            return f.read().strip()
-    except Exception as e:
-        print(f"Failed to read file: {file_path}. Error: {e}")
-        return default
+from localutil import os_specific, read_file
 
 
 class EdgeMachine:
@@ -54,7 +25,7 @@ class EdgeMachine:
     @classmethod
     def get_current_machine(cls, namespace: str) -> 'EdgeMachine':
 
-        path_head = _os_specific(
+        path_head = os_specific(
             nt = f"C:\\ProgramData\\AquaAbstractionLayer\\aquanetutil\\{namespace}\\",
             linux = f"/etc/aqua/{namespace}/",
             mac = f"/etc/aqua/{namespace}/",
@@ -64,19 +35,19 @@ class EdgeMachine:
         network = cls.get_network_instance(namespace)
 
         return cls(
-            totp_secret = _read_file(f"{path_head}totp_secret"),
+            totp_secret = read_file(f"{path_head}totp_secret"),
             network = network.name,
             group = network.group,
-            machine_owner = _read_file(f"{path_head}machine_owner"),
-            machine_name = _read_file(f"{path_head}machine_name"),
-            pk = _read_file(f"{path_head}machine_pk")
+            machine_owner = read_file(f"{path_head}machine_owner"),
+            machine_name = read_file(f"{path_head}machine_name"),
+            pk = read_file(f"{path_head}machine_pk")
         )
 
     # 현재 장치가 등록된 네트워크 인스턴스를 반환하는 인스턴스 메서드
     @classmethod
     def get_network_instance(cls, namespace: str) -> Network:
 
-        path_head = _os_specific(
+        path_head = os_specific(
             nt = f"C:\\ProgramData\\AquaAbstractionLayer\\aquanetutil\\{namespace}\\",
             linux = f"/etc/aqua/{namespace}/",
             mac = f"/etc/aqua/{namespace}/",
@@ -84,14 +55,14 @@ class EdgeMachine:
         )
 
         return Network(
-            name = _read_file(f"{path_head}network_name"),
-            group = _read_file(f"{path_head}network_group"),
-            auth_server = _read_file(f"{path_head}auth_server"),
-            relay_server = _read_file(f"{path_head}relay_server"),
-            auth_server_pk = _read_file(f"{path_head}auth_server_pk"),
-            relay_server_pk = _read_file(f"{path_head}relay_server_pk"),
-            auth_server_port = int(_read_file(f"{path_head}auth_server_port", default="38000")),
-            relay_server_port = int(_read_file(f"{path_head}relay_server_port", default="38001"))
+            name = read_file(f"{path_head}network_name"),
+            group = read_file(f"{path_head}network_group"),
+            auth_server = read_file(f"{path_head}auth_server"),
+            relay_server = read_file(f"{path_head}relay_server"),
+            auth_server_pk = read_file(f"{path_head}auth_server_pk"),
+            relay_server_pk = read_file(f"{path_head}relay_server_pk"),
+            auth_server_port = int(read_file(f"{path_head}auth_server_port", default="38000")),
+            relay_server_port = int(read_file(f"{path_head}relay_server_port", default="38001"))
         )
 
     def generate_jwt(self) -> str:
