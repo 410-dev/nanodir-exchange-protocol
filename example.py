@@ -1,6 +1,6 @@
 
 # 서버 관련 라이브러리 가져오기
-from osext.libaqnetutil.server import Authorization, Hold, Relay
+from osext.libaqnetutil.server import Authentication, Hold, Relay
 
 # EdgeMachine 관련 라이브러리 가져오기
 from osext.libaqnetutil.edge.EdgeMachine import EdgeMachine, Network, Listener
@@ -9,10 +9,10 @@ from osext.libaqnetutil.edge.EdgeMachine import EdgeMachine, Network, Listener
 
 ### 서버 예시 ###
 # 인증 서버 예시
-Authorization.setup(
+Authentication.setup(
     port = 8000,                     # 인증 서버가 사용할 포트 번호
-    domain = "example.com",          # 인증 서버의 도메인 이름. 이 때 Authorization 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
-    subdomain = "authorization",     # 인증 서버의 서브도메인 이름
+    domain = "example.com",          # 인증 서버의 도메인 이름. 이 때 Authentication 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
+    subdomain = "authentication",    # 인증 서버의 서브도메인 이름
     allow_ip_access = False,         # 인증 서버에 IP 주소로 접근을 허용할지 여부 (True: IP 주소 허용, False: IP 주소로 접근 불허)
     allow_external_access = True,    # 인증 서버에 외부 네트워크에서 접근을 허용할지 여부 (True: 외부 네트워크 허용, False: 내부 네트워크로만 접근 허용)
     policy_file = "auth_policy.json",# 인증 서버가 사용할 정책 파일 경로 (예: "auth_policy.json")
@@ -29,8 +29,8 @@ Authorization.setup(
         }
     }
 )
-Authorization.init()  # 인증 서버 초기화 (필수)
-Authorization.start() # 인증 서버 시작 (필수)
+Authentication.init()  # 인증 서버 초기화 (필수)
+Authentication.start() # 인증 서버 시작 (필수)
 
 
 # 홀드 서버 예시
