@@ -1,9 +1,11 @@
 import os
 import logging
 import shutil
+import hashlib
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -13,7 +15,7 @@ from cryptography.exceptions import InvalidTag
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuration (In production, load these from environment variables or a secure vault)
+# TODO Adaptive Configuration
 UPLOAD_DIR = Path("/tmp/secure_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -30,7 +32,6 @@ def load_private_key():
         with open(PRIVATE_KEY_PATH, "rb") as key_file:
             return serialization.load_pem_private_key(
                 key_file.read(),
-                password=None,  # Provide a password bytes object here if the PEM is encrypted
             )
     except Exception as e:
         logger.error(f"Failed to load RSA private key: {e}")
@@ -46,15 +47,18 @@ except RuntimeError:
 
 
 def verify_jwt(authorization: str = Header(None)):
-    """Validates the JWT token. (Mocked for implementation details)"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    # """Validates the JWT token."""
+    # if not authorization or not authorization.startswith("Bearer "):
+    #     raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    #
+    # token = authorization.split(" ")[1]
+    # if token == "invalid-token":
+    #     raise HTTPException(status_code=403, detail="Invalid token")
 
-    token = authorization.split(" ")[1]
-    # Implement your actual JWT verification logic here (e.g., using python-jose)
-    if token == "invalid-token":
-        raise HTTPException(status_code=403, detail="Invalid token")
-    return token
+    # TODO Implement actual JWT validation
+    # Probably should ask to Authentication server
+
+    return ""
 
 
 def sanitize_filename(filename: str) -> str:
@@ -62,97 +66,46 @@ def sanitize_filename(filename: str) -> str:
     return os.path.basename(filename)
 
 
-# --- Core Upload Endpoint ---
+# --- Threadpool Worker Functions ---
 
-@app.post("/{dest:path}")
-def upload_secure_chunk(
-        dest: str,
-        request: Request,
-        x_chunk_index: int = Header(...),
-        x_total_chunks: int = Header(...),
-        token: str = Depends(verify_jwt)
-):
+def decrypt_and_write_chunk(payload: bytes, chunk_file_path: Path):
     """
-    Receives an encrypted chunk, decrypts it, and writes it to a temporary staging area.
-    Once all chunks are received, reassembles them into the final file.
-    Note: We use a synchronous `def` (not `async def`) because we are performing heavy
-    CPU-bound cryptographic operations and blocking file I/O. FastAPI will automatically
-    run this in a separate worker thread to avoid blocking the async event loop.
+    CPU-bound task to safely decrypt and save the chunk.
+    This runs in a separate worker thread to avoid blocking the server.
     """
-    safe_dest = sanitize_filename(dest)
-    target_file_path = UPLOAD_DIR / safe_dest
-    staging_dir = UPLOAD_DIR / f".staging_{safe_dest}"
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    if SERVER_PRIVATE_KEY is None:
+        raise RuntimeError("Server private key is not loaded.")
 
-    chunk_file_path = staging_dir / f"chunk_{x_chunk_index}"
+    # 1. Parse the payload structure defined by the client
+    rsa_key_length = int.from_bytes(payload[:4], 'big')
 
-    try:
-        # Read the raw binary payload.
-        # For a 50MB chunk, this easily fits in RAM.
-        payload = request._api_route.app.state.loop.run_until_complete(request.body())
-        if not payload:
-            raise HTTPException(status_code=400, detail="Empty payload")
+    if len(payload) < 4 + rsa_key_length + 12:
+        raise ValueError("Malformed payload structure")
 
-        # 1. Parse the payload structure defined by the client
-        if len(payload) < 4:
-            raise HTTPException(status_code=400, detail="Payload too small to contain key length")
+    encrypted_aes_key = payload[4: 4 + rsa_key_length]
+    iv = payload[4 + rsa_key_length: 4 + rsa_key_length + 12]
+    encrypted_chunk = payload[4 + rsa_key_length + 12:]
 
-        rsa_key_length = int.from_bytes(payload[:4], 'big')
+    # 2. Decrypt the AES key using the server's RSA private key
+    aes_key = SERVER_PRIVATE_KEY.decrypt(
+        encrypted_aes_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
 
-        if len(payload) < 4 + rsa_key_length + 12:
-            raise HTTPException(status_code=400, detail="Malformed payload structure")
+    # 3. Decrypt the actual chunk data using AES-GCM
+    aesgcm = AESGCM(aes_key)
+    plaintext_chunk = aesgcm.decrypt(iv, encrypted_chunk, associated_data=None)
 
-        encrypted_aes_key = payload[4: 4 + rsa_key_length]
-        iv = payload[4 + rsa_key_length: 4 + rsa_key_length + 12]
-        encrypted_chunk = payload[4 + rsa_key_length + 12:]
-
-        # 2. Decrypt the AES key using the server's RSA private key
-        try:
-            aes_key = SERVER_PRIVATE_KEY.decrypt(
-                encrypted_aes_key,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
-                )
-            )
-        except ValueError:
-            logger.error("RSA decryption failed. Possible key mismatch.")
-            raise HTTPException(status_code=400, detail="Key decryption failed")
-
-        # 3. Decrypt the actual chunk data using AES-GCM
-        try:
-            aesgcm = AESGCM(aes_key)
-            plaintext_chunk = aesgcm.decrypt(iv, encrypted_chunk, associated_data=None)
-        except InvalidTag:
-            logger.error(f"AES-GCM authentication failed for chunk {x_chunk_index}.")
-            raise HTTPException(status_code=400, detail="Data corruption or tampering detected")
-
-        # 4. Save the decrypted chunk to the staging directory
-        with open(chunk_file_path, "wb") as f:
-            f.write(plaintext_chunk)
-
-        logger.info(f"Successfully processed chunk {x_chunk_index + 1}/{x_total_chunks} for {safe_dest}")
-
-        # 5. Check if all chunks have arrived
-        # This simple logic assumes chunks aren't skipped. For highly concurrent retries,
-        # checking the count of files in the staging directory is safer.
-        saved_chunks = len(list(staging_dir.glob("chunk_*")))
-        if saved_chunks == x_total_chunks:
-            logger.info(f"All chunks received for {safe_dest}. Assembling file...")
-            _assemble_file(staging_dir, target_file_path, x_total_chunks)
-            return JSONResponse(status_code=200, content={"message": "Upload complete and verified"})
-
-        return JSONResponse(status_code=202, content={"message": f"Chunk {x_chunk_index} processed"})
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error processing chunk {x_chunk_index}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error during upload")
+    # 4. Save the decrypted chunk
+    with open(chunk_file_path, "wb") as f:
+        f.write(plaintext_chunk)
 
 
-def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int):
+def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int, checksum: str):
     """Concatenates all the individual chunks in order to create the final file."""
     try:
         with open(target_file_path, "wb") as final_file:
@@ -168,14 +121,95 @@ def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int)
         shutil.rmtree(staging_dir)
         logger.info(f"File successfully assembled at {target_file_path}")
 
+        # Verify the final file's integrity using the provided checksum
+        sha256_hash = hashlib.sha256()
+        with open(target_file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        calculated_checksum = sha256_hash.hexdigest()
+        if calculated_checksum != checksum:
+            logger.error(f"Checksum mismatch for {target_file_path}: expected {checksum}, got {calculated_checksum}")
+            target_file_path.unlink()  # Remove the corrupted file
+            raise ValueError("Checksum verification failed after assembly")
+        else:
+            logger.info(f"Checksum verification passed for {target_file_path}")
+
     except Exception as e:
         logger.error(f"Failed to assemble file {target_file_path}: {e}")
-        # Leave staging directory intact for debugging or manual recovery
-        raise HTTPException(status_code=500, detail="Failed to assemble the final file")
+        raise RuntimeError("Failed to assemble the final file")
+
+
+# --- Core Upload Endpoint ---
+
+@app.post("/{dest:path}")
+async def upload_secure_chunk(
+        dest: str,
+        request: Request,
+        x_chunk_index: int = Header(...),
+        x_total_chunks: int = Header(...),
+        x_original_filename: str = Header(...),
+        x_file_sha256: str = Header(...),
+        token: str = Depends(verify_jwt)
+):
+    """
+    Async endpoint to read the network stream, offloading the heavy crypto to a thread.
+    """
+    safe_dest = sanitize_filename(dest)
+    target_file_path = UPLOAD_DIR / safe_dest
+    staging_dir = UPLOAD_DIR / f".staging_{safe_dest}"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    chunk_file_path = staging_dir / f"chunk_{x_chunk_index}"
+
+    print(f"Received chunk {x_chunk_index} of {x_total_chunks} for {safe_dest} (Original filename: {x_original_filename}, SHA256: {x_file_sha256})")
+
+    try:
+        # 1. Read the network payload natively via standard async await
+        payload = await request.body()
+        if not payload:
+            raise HTTPException(status_code=400, detail="Empty payload")
+        if len(payload) < 16:
+            raise HTTPException(status_code=400, detail="Payload too small to process")
+
+        # 2. Offload the heavy decryption and disk I/O to a threadpool worker
+        try:
+            await run_in_threadpool(decrypt_and_write_chunk, payload, chunk_file_path)
+        except ValueError as e:
+            logger.error(f"Decryption or parsing failed: {e}")
+            raise HTTPException(status_code=400, detail="Key decryption or parsing failed")
+        except InvalidTag:
+            logger.error(f"AES-GCM authentication failed for chunk {x_chunk_index}.")
+            raise HTTPException(status_code=400, detail="Data corruption or tampering detected")
+        except RuntimeError as e:
+            logger.error(str(e))
+            raise HTTPException(status_code=500, detail="Internal server configuration error")
+
+        logger.info(f"Successfully processed chunk {x_chunk_index + 1}/{x_total_chunks} for {safe_dest}")
+
+        # 3. Check if all chunks have arrived
+        saved_chunks = len(list(staging_dir.glob("chunk_*")))
+        if saved_chunks == x_total_chunks:
+            logger.info(f"All chunks received for {safe_dest}. Assembling file...")
+            # Disk I/O for assembly can also be heavy, so we threadpool it
+            try:
+                await run_in_threadpool(_assemble_file, staging_dir, target_file_path, x_total_chunks, x_file_sha256)
+            except RuntimeError:
+                raise HTTPException(status_code=500, detail="Failed to assemble the final file")
+
+            return JSONResponse(status_code=200, content={"message": "Upload complete and verified"})
+
+        return JSONResponse(status_code=202, content={"message": f"Chunk {x_chunk_index} processed"})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error processing chunk {x_chunk_index}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error during upload")
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    # Run the server on port 8000
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, workers=4)
+    # Run the server on port 8000.
+    # The string "server:app" requires this file to be named server.py
+    uvicorn.run("Hold:app", host="0.0.0.0", port=8000, workers=4)
