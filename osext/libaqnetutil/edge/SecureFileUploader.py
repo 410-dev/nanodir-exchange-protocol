@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import base64
+import hashlib
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -27,11 +29,28 @@ class SecureFileUploader:
         session.mount('https://', HTTPAdapter(max_retries=retries))
         return session
 
-    def mk_file_request(self, dest: str, header: dict, pk: str, jwt_str: str, file_path: str, start_from: int) -> tuple[bool, str, int]:
+    def mk_file_request(self, session_id: str, dest: str, header: dict, pk: str, jwt_str: str, file_path: str, start_from: int) -> tuple[bool, str, int]:
+
         url = f"{self.relay_server}/{dest}"
 
         if jwt_str:
             header["Authorization"] = f"Bearer {jwt_str}"
+
+        # 체크섬
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        file_checksum = sha256_hash.hexdigest()
+
+        # Destination string hash to SHA256
+        dest_hash = sha256_hash.hexdigest()
+
+        header["X-Original-Filename"] = os.path.basename(file_path)
+        header["X-File-SHA256"] = file_checksum
+        header["X-Session-ID"] = session_id
+        header["X-Destination"] = dest
+        header["X-Destination-H"] = dest_hash
 
         # 1. Load the RSA public key once
         try:
