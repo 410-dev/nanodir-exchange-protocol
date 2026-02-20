@@ -1,9 +1,9 @@
 
 # 서버 관련 라이브러리 가져오기
-from osext.libaqnetutil.server import Authentication, Server_Hold, Relay
+from osext.libaqnetutil import Authentication, Relay
 
 # EdgeMachine 관련 라이브러리 가져오기
-from osext.libaqnetutil.edge.EdgeMachine import EdgeMachine, Network, Listener
+from osext.libaqnetutil.EdgeMachine import EdgeMachine, Network, Listener
 
 
 
