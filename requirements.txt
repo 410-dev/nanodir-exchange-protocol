@@ -5,3 +5,6 @@ cryptography
 fastapi
 uvicorn
 cryptography
+websocket
+websocket-client
+pydantic
