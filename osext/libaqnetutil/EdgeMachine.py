@@ -1,6 +1,11 @@
 import os
 import jwt
 import requests
+import threading
+import logging
+import websocket
+import json
+import time
 
 from SecureFileUploader import SecureFileUploader
 from localutil import os_specific, read_file
@@ -10,7 +15,7 @@ class EdgeMachine:
 
     def __init__(self, totp_secret: str, network: str, group: str, machine_owner: str, machine_name: str, pk: str):
         self.totp_secret: str = totp_secret        # 32글자 이상의 TOTP 시크릿 키. 장치가 네트워크에 등록될 때 생성되어야 하며, 장치의 고유한 식별자로 사용됩니다.
-        self.network: str = network                # 장치가 등록된 네트워크 이름 (Ex. MegaCorp)
+        self.network:  str = network                # 장치가 등록된 네트워크 이름 (Ex. MegaCorp)
         self.group: str = group                    # 장치가 등록된 네트워크 그룹 이름
         self.machine_owner: str = machine_owner    # 장치의 소유자 이름 (Ex. john@mynetwork.com)
         self.machine_name: str = machine_name      # 장치의 이름 (Ex. Johns-Laptop)
@@ -260,7 +265,7 @@ class Network:
         # 파일을 바이너리 데이터로 읽어서 요청 본문에 포함
         try:
             f_uploader: SecureFileUploader = SecureFileUploader(f"{network.relay_server}:{network.relay_server_port}")
-            state, message, start_from = f_uploader.mk_file_request(endpoint, header, target.pk, identity.generate_jwt(), file_path, start_from=0)
+            state, message, start_from = f_uploader.mk_file_request(session_id, endpoint, header, target.pk, identity.generate_jwt(), file_path, start_from=0)
             return state
         except Exception as e:
             print(f"Error sending file to machine {target.get_machine_fullname()}: {e}")
@@ -277,17 +282,147 @@ class Network:
 
     # 단일 장치에 파일을 직접 보내는 인스턴스 메서드 (릴레이 서버를 거치지 않고 직접 통신)
     def direct_send_to_machine(self, machine: EdgeMachine, port: int, file_path: str) -> bool:
-        # TODO
+        # TODO - 직접 통신 방식으로 파일을 보내는 로직 추가 (예: P2P 소켓 통신, QUIC, WebRTC 등)
         return False
 
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Listener:
 
-    ## WS 모드
     @classmethod
-    def open_ws_connection_to_relay(cls, relay_url: str, port: int, current_machine: EdgeMachine, file_mapping: dict[str, str]):
+    def open_ws_connection_to_relay(cls, relay_server_url: str, handshake_http_port: int, ws_port: int, handshake_path: str, ws_path: str, current_machine: EdgeMachine, file_mapping: dict[str, str], handshake_retry_attempts: int = 5):
+        """
+        Maintains an indefinite WebSocket connection, automatically reconnecting if dropped.
+        """
+
+        # Relay server URL 프로토콜 체크 및 제거
+        protocol_pref: str = "https://" if relay_server_url.startswith("https://") else "http://" if relay_server_url.startswith("http://") else ""
+        relay_server_url = relay_server_url[len(protocol_pref):] if protocol_pref else relay_server_url
+
+        if not relay_server_url:
+            logger.error("Invalid relay server URL provided.")
+            return
+        if not handshake_http_port or not ws_port:
+            logger.error("Invalid port numbers provided for handshake or WebSocket.")
+            return
+        if not protocol_pref:
+            protocol_pref = "http://"
+
+        handshake_fails: int = 0
+
+        while True:
+
+            # 1. Execute the initial handshake
+            session_id = cls._perform_handshake(f"{protocol_pref}{relay_server_url}:{handshake_http_port}/{handshake_path}", current_machine)
+
+            if not session_id:
+                handshake_fails += 1
+                if handshake_fails >= handshake_retry_attempts:
+                    logger.error(f"Handshake failed {handshake_fails}/{handshake_retry_attempts} times. Please check the relay server and network connection.")
+                    return
+                logger.error(f"Handshake failed. Retrying in 5 seconds... ({handshake_fails}/{handshake_retry_attempts})")
+                time.sleep(5)
+                continue
+
+            logger.info(f"Handshake successful. Session ID: {session_id}")
+            ws_url = f"ws://{relay_server_url}:{ws_port}/{ws_path}?session={session_id}"
+
+            # 2. Define WebSocket event handlers
+            def on_message(ws, message):
+                # Check for the specific prefix and offload to a thread so we don't block the socket receiver
+                if isinstance(message, str) and message.startswith("ND_EXC_WSSIG:"):
+                    threading.Thread(
+                        target=cls._process_incoming_data,
+                        args=(message, file_mapping),
+                        daemon=True
+                    ).start()
+
+            def on_error(ws, error):
+                logger.error(f"WebSocket encountered an error: {error}")
+
+            def on_close(ws, close_status_code, close_msg):
+                logger.warning("WebSocket connection closed. Will attempt to reconnect.")
+
+            def on_open(ws):
+                logger.info("WebSocket connection established.")
+                # Start the background heartbeat thread once connected
+                threading.Thread(
+                    target=cls._send_heartbeat,
+                    args=(ws,),
+                    daemon=True
+                ).start()
+
+            # 3. Initialize and run the WebSocket application
+            ws_app = websocket.WebSocketApp(
+                ws_url,
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close
+            )
+
+            # This blocks until the connection is closed or drops
+            ws_app.run_forever()
+
+            # Prevent rapid tight-looping if the server is rejecting connections
+            time.sleep(5)
+
+    @classmethod
+    def _perform_handshake(cls, handshake_url: str, current_machine: EdgeMachine) -> str:
+        """
+        Executes the HTTP handshake and parses the JSON response for the session ID.
+        """
+
+        # TODO - 핸드셰이크 추가
+
+        try:
+            # Send basic string representation of the machine
+            payload = {"machine_data": str(current_machine)}
+            response = requests.post(handshake_url, json=payload, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            if data.get("state") == "OK" and "session" in data:
+                return data["session"]
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"HTTP request failed during handshake: {e}")
+        except ValueError:
+            logger.error("Failed to parse JSON response during handshake.")
+
+        return ""
+
+    @classmethod
+    def _process_incoming_data(cls, message: str, file_mapping: dict[str, str]):
+        """
+        Handles the specific "ND_EXC_WSSIG:" messages in an isolated thread.
+        """
+
+        # TODO - 수신된 메시지 처리 로직 추가 (file_mapping을 활용하여 적절한 파일로 매핑 및 저장)
+
+        logger.info(f"Processing signal starting with: {message[:25]}...")
+        # Put your file_mapping logic and specific data processing here
         pass
+
+    @classmethod
+    def _send_heartbeat(cls, ws: websocket.WebSocketApp):
+        """
+        Periodically reports online state to the server every 10 seconds.
+        """
+
+        # TODO - 서버가 기대하는 형태로 상태 보고 페이로드 구성 (예: {"status": "online"})
+
+        while ws.keep_running:
+            try:
+                # Send the state report as expected by the server
+                heartbeat_payload = json.dumps({"status": "online"})
+                ws.send(heartbeat_payload)
+                time.sleep(10)
+            except Exception as e:
+                logger.error(f"Failed to send background heartbeat: {e}")
+                break
 
     ## Polling 모드
     @classmethod
