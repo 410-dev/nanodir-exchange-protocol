@@ -1,4 +1,3 @@
-pyjwt
 requests
 urllib3
 cryptography

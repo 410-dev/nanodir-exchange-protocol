@@ -47,7 +47,7 @@ except RuntimeError:
     logger.warning("Starting without a valid private key. Decryption will fail.")
 
 
-def verify_jwt(authorization: str = Header(None)):
+def verify_identity(authorization: str = Header(None)):
     # """Validates the JWT token."""
     # if not authorization or not authorization.startswith("Bearer "):
     #     raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
@@ -152,7 +152,7 @@ async def upload_secure_chunk(
         x_file_sha256: str = Header(None),
         x_session_id: str = Header(None),
         x_destination_h: str = Header(None),
-        token: str = Depends(verify_jwt)
+        token: str = Depends(verify_identity)
 ):
     """
     Async endpoint to read the network stream, offloading the heavy crypto to a thread.

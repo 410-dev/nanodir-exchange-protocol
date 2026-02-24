@@ -1,5 +1,5 @@
 import os
-import jwt
+import pyotp
 import requests
 import threading
 import logging
@@ -22,9 +22,8 @@ class EdgeMachine:
                                                    # 장치의 이름은 네트워크 내에서 고유해야 하며, 사용자 친화적이어야 합니다.
                                                    # 장치의 이름에는 -, _, 공백, 알파벳, 숫자만 사용할 수 있습니다. (특수문자 사용 불가)
         self.pk: str = pk                          # 장치의 공개키. 네트워크에 등록된 장치들은 서로의 공개키를 사용하여 안전하게 통신할 수 있습니다.
-        self.jwt_token: str = self.generate_jwt()  # 장치가 네트워크에 등록된 후 발급받는 JWT 토큰. 이 토큰은 장치가 네트워크에 인증된 상태임을 나타내며, 네트워크와의 통신에 사용됩니다.
-                                                   #   매 10분마다 갱신됩니다.
-
+        self.auth: str = self.generate_auth()      # 장치가 네트워크에 등록된 후 발급받는 토큰. 이 토큰은 장치가 네트워크에 인증된 상태임을 나타내며, 네트워크와의 통신에 사용됩니다.
+           
 
     # 현재 장치의 EdgeMachine 인스턴스를 반환하는 클래스 메서드
     @classmethod
@@ -70,18 +69,14 @@ class EdgeMachine:
             relay_server_port = int(read_file(f"{path_head}relay_server_port", default="38001"))
         )
 
-    def generate_jwt(self) -> str:
+    def generate_auth(self) -> str:
         # 만약 TOTP 시크릿 키가 32글자 미만이거나 비어있다면 다른 장치의 주소를 포인팅 하는 목적이므로 빈 문자열 반환
         if not self.totp_secret or len(self.totp_secret) < 32:
             return ""
 
-        # TOTP 시크릿 키로 JWT 토큰 생성
-        payload = {
-            "machine_owner": self.machine_owner,
-            "machine_name": self.machine_name
-        }
-        token = jwt.encode(payload, self.totp_secret, algorithm="HS256")
-        return token
+        # TOTP 시크릿 키를 사용하여 현재 TOTP 값을 생성
+        totp = pyotp.TOTP(self.totp_secret)
+        return totp.now()
 
     def get_machine_name(self) -> str:
         return f"{self.machine_owner}/{self.machine_name}"
@@ -104,7 +99,7 @@ class Network:
     def __init__(self, name: str, group: str, auth_server: str, relay_server: str, auth_server_pk: str, relay_server_pk: str, auth_server_port: int = 38000, relay_server_port: int = 38001):
         self.name: str = name                            # 네트워크 이름. 장치가 네트워크에 등록될 때 이 이름으로 등록됩니다. (예: "MegaCorp")
         self.group: str = group                          # 네트워크 그룹 이름. 장치가 네트워크에 등록될 때 이 그룹 이름으로 등록됩니다. (예: "Engineering/RnD")
-        self.auth_server: str = auth_server              # 네트워크의 인증 서버 URL. 장치가 네트워크에 등록될 때 이 URL로 TOTP 시크릿 키와 장치 정보를 전송하여 JWT 토큰을 발급받습니다.
+        self.auth_server: str = auth_server              # 네트워크의 인증 서버 URL. 장치가 네트워크에 등록될 때 이 URL로 TOTP 시크릿 키와 장치 정보를 전송하여 토큰을 발급받습니다.
         self.auth_server_pk: str = auth_server_pk        # 네트워크의 인증 서버 공개키.
         self.auth_server_port: int = auth_server_port    # 네트워크의 인증 서버 포트 번호. 인증 서버와 통신할 때 이 포트 번호를 사용합니다.
         self.relay_server: str = relay_server            # 네트워크의 릴레이 서버 URL. 장치가 다른 장치와 통신할 때 이 URL을 통해 메시지를 중계합니다.
@@ -113,10 +108,10 @@ class Network:
 
 
     @staticmethod
-    def _mk_request(url: str, header: dict, pk: str, jwt_str: str) -> dict:
+    def _mk_request(url: str, header: dict, pk: str, credentials: str) -> dict:
 
-        if jwt_str:
-            header["Authorization"] = f"Bearer {jwt_str}"
+        if credentials:
+            header["Authorization"] = f"Bearer {credentials}"
 
         response = requests.post(url, headers=header, timeout=5)
 
@@ -140,7 +135,7 @@ class Network:
 
         # 5초 타임아웃으로 GET 요청을 보내 등록 여부 확인
         try:
-            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, current_machine.generate_jwt())
+            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, current_machine.generate_auth())
             return data.get("enrolled", False)
 
         except Exception as e:
@@ -161,7 +156,7 @@ class Network:
         }
 
         try:
-            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, identity.generate_jwt())
+            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, identity.generate_auth())
             machines_data = data.get("machines", [])
             machines = []
 
@@ -201,7 +196,7 @@ class Network:
         }
 
         try:
-            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, identity.generate_jwt())
+            data = self._mk_request(f"{self.auth_server}/{endpoint}", header, self.auth_server_pk, identity.generate_auth())
             groups = data.get("groups", [])
             return groups
         except Exception as e:
@@ -241,7 +236,7 @@ class Network:
         endpoint: str = f"v1/send"
 
         # 릴레이 서버 정책 체크
-        data: dict = self._mk_request(f"{self.relay_server}/{endpoint}", header, self.auth_server_pk, target.generate_jwt())
+        data: dict = self._mk_request(f"{self.relay_server}/{endpoint}", header, self.auth_server_pk, target.generate_auth())
         if not data.get("status", "OK") == "OK":
             print(f"Relay server rejected the request to send file to machine {target.get_machine_fullname()}. Response: {data}")
             return False
@@ -265,7 +260,7 @@ class Network:
         # 파일을 바이너리 데이터로 읽어서 요청 본문에 포함
         try:
             f_uploader: SecureFileUploader = SecureFileUploader(f"{network.relay_server}:{network.relay_server_port}")
-            state, message, start_from = f_uploader.mk_file_request(session_id, endpoint, header, target.pk, identity.generate_jwt(), file_path, start_from=0)
+            state, message, start_from = f_uploader.mk_file_request(session_id, endpoint, header, target.pk, identity.generate_auth(), file_path, start_from=0)
             return state
         except Exception as e:
             print(f"Error sending file to machine {target.get_machine_fullname()}: {e}")

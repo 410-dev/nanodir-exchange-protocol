@@ -29,12 +29,12 @@ class SecureFileUploader:
         session.mount('https://', HTTPAdapter(max_retries=retries))
         return session
 
-    def mk_file_request(self, session_id: str, dest: str, header: dict, pk: str, jwt_str: str, file_path: str, start_from: int) -> tuple[bool, str, int]:
+    def mk_file_request(self, session_id: str, dest: str, header: dict, pk: str, credentials: str, file_path: str, start_from: int) -> tuple[bool, str, int]:
 
         url = f"{self.relay_server}/{dest}"
 
-        if jwt_str:
-            header["Authorization"] = f"Bearer {jwt_str}"
+        if credentials:
+            header["Authorization"] = f"Bearer {credentials}"
 
         # 체크섬
         sha256_hash = hashlib.sha256()
