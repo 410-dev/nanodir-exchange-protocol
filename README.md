@@ -114,7 +114,7 @@ Relay
 
     요청 구조: 
 
-     `REQ:<현재 장치 인증 JWT 문자열>:pk:<로그온 ID>, <로그온 ID>, .... :<파일 유형>:<확장자>:<파일 크기 in bytes>:EOD`
+     `REQ:<현재 장치 인증 문자열>:pk:<로그온 ID>, <로그온 ID>, .... :<파일 유형>:<확장자>:<파일 크기 in bytes>:EOD`
 
     요청 예시: 
 
@@ -131,7 +131,7 @@ Relay
 
 3. 철수가 보내고자 하는 장치를 고른 후 (예: My-Desktop) 이것의 장치 이름을 Relay 서버에 전송하여 커넥션에 필요한 정보를 반환받는다. 이 때, 서버 측에서는 정책에 따라 전송 모델 A 혹은 모델 B 를 결정한다. 만약 모델 A 가 되었을 경우 NAT Traversal 및 STUN/TURN 을 활용하기 위한 정보를 담은 후 영희의 장치 주소를 전송하고, 모델 B 가 되었을 경우, 정책과 수신자 장치 온라인 여부에 따라 Relay 혹은 Hold 서버의 해당 정보를 반환한다. Relay 서버에는 Session ID 와 바인딩 된 체크섬 및 수신 발신인의 정보를 포함한다.
 
-    요청 구조: `REQ:<현재 장치 인증 JWT 문자열>:<장치 이름>,<장치 이름>, ...:<파일 유형>:<확장자>:<파일 크기 in bytes>:<SHA-256 체크섬>:EOD`
+    요청 구조: `REQ:<현재 장치 인증 문자열>:<장치 이름>,<장치 이름>, ...:<파일 유형>:<확장자>:<파일 크기 in bytes>:<SHA-256 체크섬>:EOD`
 
     요청 예시: `REQ:2413fb3709b05939f04cf2e92f7d0897fc2596f9ad0b8a9ea855c7bfebaae892:DomainA/Group2/alice@mynetwork.com/My-Desktop:plain-text:txt:32768:0c0e36f8c9580a11bb72906e973b81be37c1d0ab0ef4812a990069bfac142df7:EOD`
 
