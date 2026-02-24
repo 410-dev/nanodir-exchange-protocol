@@ -7,3 +7,5 @@ cryptography
 websocket
 websocket-client
 pydantic
+sqlalchemy
+pyotp
