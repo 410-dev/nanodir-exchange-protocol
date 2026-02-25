@@ -2,6 +2,8 @@ import asyncio
 import logging
 import uuid
 from typing import Dict
+
+import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from pydantic import BaseModel
 import uvicorn
@@ -21,16 +23,20 @@ class ConnectionManager:
     def __init__(self):
         # Maps session_id to the active WebSocket object
         self.active_connections: Dict[str, WebSocket] = {}
+        self.online_state_visible: Dict[str, str] = {}  # Online report state for each machine connected over WS (Which is visible to other users)
+        self.online_state_real: Dict[str, bool] = {}  # Online track state for each machine connected over WS (Which is not visible to other users, but used for internal logic)
 
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[session_id] = websocket
         logger.info(f"Client connected. Session: {session_id} | Total active: {len(self.active_connections)}")
 
+
     def disconnect(self, session_id: str):
         if session_id in self.active_connections:
             del self.active_connections[session_id]
             logger.info(f"Client disconnected. Session: {session_id} | Total active: {len(self.active_connections)}")
+
 
     async def send_signal_to_client(self, session_id: str, payload: str):
         """
@@ -42,6 +48,15 @@ class ConnectionManager:
                 await websocket.send_text(message)
             except Exception as e:
                 logger.error(f"Failed to send message to {session_id}: {e}")
+
+    def mark_online_status(self, session_id: str, visible_status: str, last_heartbeat: int):
+        """
+        Updates the online status of a client. This can be used to track both the real connection status
+        and the status that is reported to other users.
+        """
+        self.online_state_visible[session_id] = visible_status
+        self.online_state_real[session_id] = last_heartbeat
+        logger.info(f"Updated online status for {session_id}: Visible={visible_status}, Real={last_heartbeat}")
 
 manager = ConnectionManager()
 
@@ -78,6 +93,26 @@ async def websocket_endpoint(websocket: WebSocket, session: str = None):
         while True:
             # Wait for incoming messages (like the 10-second background heartbeat)
             data = await websocket.receive_text()
+
+            # Data is a line of status report:
+            #  BEGIN:<Total Length>:<Format Version>:<Online Status>:END
+            components = data.strip().split(":")
+            if components[0] != "BEGIN" or components[-1] != "END" or (len(components) > 3 and str(len(components)) != components[1]):
+                logger.warning(f"Received malformed heartbeat from {session}: {data}")
+                continue
+
+            if components[2] != "1":  # Format version check
+
+                # Update online status
+                online_status = components[3] if len(components) > 3 else "unknown"
+                datetime_now = datetime.datetime.now().timestamp()
+                manager.mark_online_status(session, visible_status=online_status, last_heartbeat=int(datetime_now))
+
+
+            else:
+                # Unsupported
+                logger.warning(f"Received unsupported format version from {session}: {data}")
+                continue
 
             # In production, you might want to parse this JSON to update a "last seen" timestamp
             # in a database or cache to track client health.
