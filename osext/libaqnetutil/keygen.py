@@ -51,6 +51,21 @@ def generate_rsa_keypair(private_key_path="server_private_key.pem", public_key_p
 
     return private_key, public_key
 
+def stringify_rsa_key(key) -> str:
+    if isinstance(key, rsa.RSAPrivateKey):
+        return key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+    elif isinstance(key, rsa.RSAPublicKey):
+        return key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+    else:
+        raise ValueError("Unsupported key type for stringification")
+
 def rsa_encrypt(pk_str: str = None, public_key: rsa.RSAPublicKey = None, plaintext: str = "") -> tuple[bool, bytes]:
     if pk_str:
         try:
