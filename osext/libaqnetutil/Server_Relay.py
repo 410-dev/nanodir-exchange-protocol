@@ -24,7 +24,8 @@ class ConnectionManager:
         # Maps session_id to the active WebSocket object
         self.active_connections: Dict[str, WebSocket] = {}
         self.online_state_visible: Dict[str, str] = {}  # Online report state for each machine connected over WS (Which is visible to other users)
-        self.online_state_real: Dict[str, bool] = {}  # Online track state for each machine connected over WS (Which is not visible to other users, but used for internal logic)
+        self.online_state_real: Dict[str, int] = {}  # Online track state for each machine connected over WS (Which is not visible to other users, but used for internal logic)
+        self.session_prepared: Dict[str, int] = {} # Session preparation state for each session, where the int is the last time request. After 30 seconds, the session is considered expired and will be removed from the session table.
 
     async def connect(self, session_id: str, websocket: WebSocket):
         await websocket.accept()
@@ -72,6 +73,9 @@ async def handshake(payload: HandshakePayload):
     session_id = str(uuid.uuid4())
     logger.info(f"Handshake requested by machine: {payload.machine_data}. Issued session: {session_id}")
 
+    # Register to session table
+    manager.session_prepared[session_id] = int(datetime.datetime.now().timestamp())
+
     return {
         "state": "OK",
         "session": session_id
@@ -85,6 +89,14 @@ async def websocket_endpoint(websocket: WebSocket, session: str = None):
     """
     if not session:
         await websocket.close(code=1008, reason="Session ID missing")
+        return
+
+
+    # Check if the session is prepared and not expired (30 seconds)
+    current_time = int(datetime.datetime.now().timestamp())
+    if session not in manager.session_prepared or (current_time - manager.session_prepared[session]) > 30:
+        await websocket.close(code=1008, reason="Invalid or expired session")
+        logger.warning(f"WebSocket connection attempt with invalid or expired session: {session}")
         return
 
     await manager.connect(session, websocket)
