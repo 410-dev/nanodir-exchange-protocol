@@ -263,6 +263,8 @@ async def register_machine(payload: MachineRegistrationPayload):
             server_pk, server_sk = generate_rsa_keypair(nosave=True)
 
             # 하드웨어 증명 검증 로직 (auth_method 가 tpm 이나 apple_se 일 경우)
+            # 현재 구현이 불안정하므로 강제로 software 폴백
+            payload.auth_method = "software"
             if payload.auth_method in ["tpm", "apple_se"]:
                 if not payload.hardware_ak or not payload.hardware_attestation:
                     return {"state": "ERROR", "message": "MISSING_HARDWARE_PAYLOAD", "session": ""}
