@@ -129,7 +129,7 @@ class Network:
         machine_name: str = f"{self.name}/{self.group}/{current_machine.machine_owner}/{current_machine.machine_name}"
         endpoint: str = f"v1/is_enrolled"
         header = {
-            "Machine-Name": machine_name,
+            "Machine-Full-Name": machine_name,
             "Identity": current_machine.get_machine_fullname(),
         }
 
