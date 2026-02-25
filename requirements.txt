@@ -9,3 +9,4 @@ websocket-client
 pydantic
 sqlalchemy
 pyotp
+cbor2
