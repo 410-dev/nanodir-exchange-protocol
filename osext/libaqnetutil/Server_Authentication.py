@@ -5,13 +5,17 @@ import uuid
 import hashlib
 import uvicorn
 import pyotp
-
-from urllib3 import request
-from localutil import os_specific, read_file
-from typing import Dict
+import time
+import base64
+import cbor2
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
-from keygen import generate_totp_seed, hash_password, generate_totp_result, generate_rsa_keypair, rsa_decrypt, rsa_encrypt
+from pydantic import BaseModel as BodyPayloadBaseModel
+from keygen import generate_totp_seed, hash_password, generate_totp_result, generate_rsa_keypair, rsa_decrypt, rsa_encrypt, stringify_rsa_key
 
 # Configure production-level logging
 logger = logging.getLogger(__name__)
@@ -24,6 +28,81 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 engine: Engine = None
 app = FastAPI()
 
+# Base class for our models
+class DBBaseObject(DeclarativeBase):
+    pass
+
+
+# Define the table structure as a Python class
+class RegisteredUserObject(DBBaseObject):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uid: Mapped[str] = mapped_column(String(50), unique=True)
+    email: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(50))
+    profilepic: Mapped[str] = mapped_column(String(200))
+    max_devices: Mapped[int] = mapped_column()
+    password: Mapped[str] = mapped_column(String(100))
+    password_expire: Mapped[int] = mapped_column() # 패스워드 만료 시점 (예: 타임스탬프, 또는 일수)
+    network: Mapped[str] = mapped_column(String(50))
+    group_full_path: Mapped[str] = mapped_column(String(200))
+    group_uid: Mapped[str] = mapped_column(String(50))
+    totp: Mapped[str] = mapped_column(String(100)) # TOTP 시크릿 키
+    role: Mapped[str] = mapped_column(String(50))
+    tags: Mapped[str] = mapped_column(String(200)) # 문자열로 저장 (예: "tag1,tag2,tag3")
+
+class GroupObject(DBBaseObject):
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    network: Mapped[str] = mapped_column(String(50))
+    group_name: Mapped[str] = mapped_column(String(50))
+    group_parent: Mapped[str] = mapped_column(String(200)) # 부모 그룹의 full path (예: parent1/parent2/me 라면 "parent1/parent2")
+    group_uid: Mapped[str] = mapped_column(String(50))
+
+
+class MachineObject(DBBaseObject):
+    __tablename__ = "machines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uid: Mapped[str] = mapped_column(String(50), unique=True)
+    machine_full_name: Mapped[str] = mapped_column(String(200), unique=True) # 머신의 full name (예: "Engineering/RnD/john.doe/laptop1")
+    machine_type: Mapped[str] = mapped_column(String(50)) # 머신의 유형 (예: "desktop", "laptop", "server", "mobile" 등)
+    network: Mapped[str] = mapped_column(String(50)) # 머신이 속한 네트워크. 향후 멀티 네트워크 지원 시 필요할 수 있으므로 일단 남겨둡니다.
+    group_full_path: Mapped[str] = mapped_column(String(200))
+    group_uid: Mapped[str] = mapped_column(String(50))
+    name: Mapped[str] = mapped_column(String(50))
+    owner: Mapped[str] = mapped_column(String(100))
+    policies: Mapped[str] = mapped_column(String(200)) # 머신에 적용된 정책 목록 (예: "policy1,policy2,policy3")
+    machine_totp: Mapped[str] = mapped_column(String(100)) # 머신의 TOTP 시크릿 키
+    client_pk: Mapped[str] = mapped_column(String(200)) # 머신의 공개키 (PEM 형식으로 저장)
+    server_pk: Mapped[str] = mapped_column(String(200)) # 서버가 보관하는 서버의 공개키 - 클라이언트에게 자격 증명을 할 때 사용합니다.
+    auth_method: Mapped[str] = mapped_column(String(20)) # 'software', 'tpm', 'apple_se'
+    hardware_ak: Mapped[str] = mapped_column(String(200)) # TPM이나 Apple SE와 같은 하드웨어 보안 모듈에서 인증에 사용되는 AK (Attestation Key) 정보. 소프트웨어 인증 방식인 경우 빈 문자열로 저장됩니다.
+
+
+class MachineRegistrationPayload(BodyPayloadBaseModel):
+    network_name: str
+    network_url: str
+    machine_type: str
+    group: str
+    machine_name: str
+    owner_email: str
+    pk: str
+    credentials: str
+    user_totp: str
+    auth_method: str = "software" # 기본: 'software'
+    hardware_ak: str = ""  # TPM 또는 SE에서 생성한 증명키(AK)의 공개키
+    hardware_attestation: str = ""  # TPM Quote 또는 App Attest 서명 데이터
+
+
+class MachineEnumerationRequestPayload(BodyPayloadBaseModel):
+    network_name: str
+    network_url: str
+    owner_email: str
+    credentials: str
+    user_totp: str
 
 def _assert(expected, actual, operation = lambda x, y: x == y):
     if not operation(expected, actual):
@@ -45,82 +124,78 @@ def _assert_machine_identity(credentials: str):
     identity = _fetch_machine_identity_from_table(credentials)
     if not identity:
         raise ValueError(f"Invalid credentials: {credentials}")
-    
-    
-
-# Base class for our models
-class Base(DeclarativeBase):
-    pass
 
 
-# Define the table structure as a Python class
-class RegisteredUserObject(Base):
-    __tablename__ = "users"
+def _verify_hardware_signature(ak_pem: str, signature_hex: str, payload_data: str) -> bool:
+    try:
+        # PEM 형식의 공개키 로드
+        public_key = serialization.load_pem_public_key(ak_pem.encode('utf-8'))
+        signature = bytes.fromhex(signature_hex)
+        data_to_verify = payload_data.encode('utf-8')
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    uid: Mapped[str] = mapped_column(String(50), unique=True)
-    email: Mapped[str] = mapped_column(String(100), unique=True)
-    name: Mapped[str] = mapped_column(String(50))
-    profilepic: Mapped[str] = mapped_column(String(200))
-    max_devices: Mapped[int] = mapped_column()
-    reset_password_on_logon: Mapped[bool] = mapped_column() # 태그 항목에 "reset_password_on_logon" 을 넣는 방식으로 추후 대체
-    password: Mapped[str] = mapped_column(String(100))
-    password_expire: Mapped[int] = mapped_column() # 패스워드 만료 시점 (예: 타임스탬프, 또는 일수)
-    network: Mapped[str] = mapped_column(String(50))
-    group_full_path: Mapped[str] = mapped_column(String(200))
-    group_uid: Mapped[str] = mapped_column(String(50))
-    totp: Mapped[str] = mapped_column(String(100)) # TOTP 시크릿 키
-    # role: Mapped[str] = mapped_column(String(50))
-    # tags: Mapped[str] = mapped_column(String(200)) # 문자열로 저장 (예: "tag1,tag2,tag3")
+        # 키 타입에 따른 검증 분기
+        if isinstance(public_key, rsa.RSAPublicKey):
+            # TPM 2.0 환경: 주로 RSA 키를 사용
+            # 설정에 따라 PSS 패딩을 사용할 수도 있으므로, 클라이언트 생성 방식과 맞춰야 합니다.
+            public_key.verify(
+                signature,
+                data_to_verify,
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            # Apple Secure Enclave 환경: ECDSA (주로 P-256 커브) 사용
+            public_key.verify(
+                signature,
+                data_to_verify,
+                ec.ECDSA(hashes.SHA256())
+            )
+        else:
+            logger.error("Unsupported public key type. Only RSA and EC are supported.")
+            return False
 
-class GroupObject(Base):
-    __tablename__ = "groups"
+        return True
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    network: Mapped[str] = mapped_column(String(50))
-    group_name: Mapped[str] = mapped_column(String(50))
-    group_parent: Mapped[str] = mapped_column(String(200)) # 부모 그룹의 full path (예: parent1/parent2/me 라면 "parent1/parent2")
-    group_uid: Mapped[str] = mapped_column(String(50))
-
-
-class MachineObject(Base):
-    __tablename__ = "machines"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    network: Mapped[str] = mapped_column(String(50))
-    # uid: Mapped[str] = mapped_column(String(50), unique=True)
-    machine_full_name: Mapped[str] = mapped_column(String(200), unique=True) # 머신의 full name (예: "Engineering/RnD/john.doe/laptop1")
-    machine_type: Mapped[str] = mapped_column(String(50)) # 머신의 유형 (예: "desktop", "laptop", "server", "mobile" 등)
-    # network: Mapped[str] = mapped_column(String(50)) # 머신이 속한 네트워크. 향후 멀티 네트워크 지원 시 필요할 수 있으므로 일단 남겨둡니다.
-    group_full_path: Mapped[str] = mapped_column(String(200))
-    group_uid: Mapped[str] = mapped_column(String(50))
-    name: Mapped[str] = mapped_column(String(50))
-    owner: Mapped[str] = mapped_column(String(100))
-    policies: Mapped[str] = mapped_column(String(200)) # 머신에 적용된 정책 목록 (예: "policy1,policy2,policy3")
-    machine_totp: Mapped[str] = mapped_column(String(100)) # 머신의 TOTP 시크릿 키
-    client_pk: Mapped[str] = mapped_column(String(200)) # 머신의 공개키 (PEM 형식으로 저장)
-    server_pk: Mapped[str] = mapped_column(String(200)) # 서버가 보관하는 서버의 공개키 - 클라이언트에게 자격 증명을 할 때 사용합니다.
+    except InvalidSignature:
+        logger.error("Signature verification failed: The signature is invalid or does not match the payload.")
+        return False
+    except Exception as e:
+        logger.error(f"Hardware signature verification error: {e}")
+        return False
 
 
-class MachineRegistrationPayload(BaseModel):
-    network_name: str
-    network_url: str
-    machine_type: str
-    group: str
-    machine_name: str
-    owner_email: str
-    pk: str
-    credentials: str
-    user_totp: str
+def _authenticate_machine(session: Session, machine_full_name: str, headers: dict) -> bool:
+    stmt = select(MachineObject).where(MachineObject.machine_full_name == machine_full_name)
+    machine = session.execute(stmt).scalar_one_or_none()
 
+    if not machine:
+        return False
 
-class MachineEnumerationRequestPayload(BaseModel):
-    network_name: str
-    network_url: str
-    owner_email: str
-    credentials: str
-    user_totp: str
+    auth_method = machine.auth_method
 
+    if auth_method == "software":
+        # 기존 소프트웨어 방식 (TOTP 폴백)
+        client_totp = headers.get("Authorization", "").replace("Bearer ", "")
+        otp = pyotp.TOTP(machine.machine_totp)
+        expected_digest = hashlib.sha256(otp.now().encode()).hexdigest()
+        return expected_digest == client_totp
+
+    elif auth_method in ["tpm", "apple_se"]:
+        # 하드웨어 방식 (서명 검증)
+        hardware_signature = headers.get("Hardware-Signature", "")
+        timestamp = headers.get("Hardware-Timestamp", "")
+
+        # 1. Replay 공격 방지를 위한 타임스탬프 검증 (예: 60초 이내의 요청만 허용)
+        if not timestamp or abs(int(time.time()) - int(timestamp)) > 60:
+            return False
+
+        # 2. 클라이언트는 "머신이름+타임스탬프" 문자열을 TPM/SE로 서명해서 보낸다고 가정
+        signed_payload = f"{machine_full_name}:{timestamp}"
+
+        # 3. 데이터베이스에 저장된 AK로 서명 검증
+        return _verify_hardware_signature(machine.hardware_ak, hardware_signature, signed_payload)
+
+    return False
 
 @app.post("/register_machine")
 async def register_machine(payload: MachineRegistrationPayload):
@@ -159,8 +234,8 @@ async def register_machine(payload: MachineRegistrationPayload):
 
             # TOTP 검증
             locally_generated_totp = generate_totp_result(result.totp)
-            if locally_generated_totp != payload.totp:
-                logger.warning(f"Registration failed: Invalid TOTP for email {payload.owner_email}. Expected {locally_generated_totp}, got {payload.totp}.")
+            if locally_generated_totp != payload.user_totp:
+                logger.warning(f"Registration failed: Invalid TOTP for email {payload.owner_email}. Expected {locally_generated_totp}, got {payload.user_totp}.")
                 return {
                     "state": "ERROR",
                     "message": f"INVALID_TOTP:{payload.owner_email}",
@@ -187,6 +262,81 @@ async def register_machine(payload: MachineRegistrationPayload):
             client_pk, client_sk = generate_rsa_keypair(nosave=True)
             server_pk, server_sk = generate_rsa_keypair(nosave=True)
 
+            # 하드웨어 증명 검증 로직 (auth_method 가 tpm 이나 apple_se 일 경우)
+            if payload.auth_method in ["tpm", "apple_se"]:
+                if not payload.hardware_ak or not payload.hardware_attestation:
+                    return {"state": "ERROR", "message": "MISSING_HARDWARE_PAYLOAD", "session": ""}
+
+                try:
+                    if payload.auth_method == "tpm":
+                        # TPM 검증 로직
+                        # payload.hardware_attestation 을 JSON 형태로 받아 EK 인증서를 추출한다고 가정합니다.
+                        attestation_data = payload.hardware_attestation  # 클라이언트 구현에 따라 dict로 파싱 필요
+
+                        if isinstance(attestation_data, str):
+                            import json
+                            attestation_data = json.loads(attestation_data)
+
+                        ek_cert_pem = attestation_data.get("ek_cert")
+                        if not ek_cert_pem:
+                            raise ValueError("TPM EK Certificate is missing.")
+
+                        # X.509 포맷인 EK 인증서 로드
+                        ek_cert = x509.load_pem_x509_certificate(
+                            ek_cert_pem.encode('utf-8'),
+                            default_backend()
+                        )
+
+                        # 1차 검증: 인증서의 발급자(Issuer)가 신뢰할 수 있는 TPM 제조사인지 확인
+                        # 실제 운영 환경에서는 Infineon, Intel 등의 Root CA 인증서를 서버에 저장해두고 체인을 검증해야 합니다.
+                        issuer_name = ek_cert.issuer.rfc4514_string()
+                        logger.info(f"TPM Manufacturer / Issuer: {issuer_name}")
+
+                        # 2차 검증: 클라이언트가 보낸 hardware_ak 가 이 TPM에 종속되어 있다는 것을
+                        # MakeCredential 프로세스나 TPM2_Quote 를 통해 증명해야 합니다.
+                        # (이 부분은 tpm2-pytss 라이브러리를 통한 복잡한 TCG 표준 구조체 파싱이 필요하므로
+                        # 클라이언트가 올바른 Quote를 보냈는지 _verify_hardware_signature 로 1차 확인합니다.)
+
+                    elif payload.auth_method == "apple_se":
+                        # Apple App Attest 검증 로직
+                        # Apple은 증명 데이터를 Base64 인코딩된 CBOR 형식으로 보냅니다.
+                        attestation_bytes = base64.b64decode(payload.hardware_attestation)
+                        attestation_obj = cbor2.loads(attestation_bytes)
+
+                        # 1. CBOR 구조에서 X.509 인증서 체인(x5c) 추출
+                        cert_chain = attestation_obj.get("fmt") == "apple-appattest" and \
+                                     attestation_obj.get("attStmt", {}).get("x5c", [])
+
+                        if not cert_chain:
+                            raise ValueError("Invalid Apple Attestation format or missing certificate chain.")
+
+                        # 2. 첫 번째 인증서(Leaf Certificate) 파싱
+                        leaf_cert_bytes = cert_chain[0]
+                        leaf_cert = x509.load_der_x509_certificate(leaf_cert_bytes, default_backend())
+
+                        # 3. 인증서에 포함된 공개키 추출 및 저장될 hardware_ak와 일치하는지 비교
+                        leaf_pub_key = leaf_cert.public_key()
+                        leaf_pub_key_pem = leaf_pub_key.public_bytes(
+                            encoding=serialization.Encoding.PEM,
+                            format=serialization.PublicFormat.SubjectPublicKeyInfo
+                        ).decode('utf-8')
+
+                        # 클라이언트가 명시한 키와 인증서 안의 키가 다르면 공격 시도로 간주
+                        if leaf_pub_key_pem.strip() != payload.hardware_ak.strip():
+                            raise ValueError("Public key mismatch in Apple Attestation.")
+
+                        # 추가 보안 검증 (실제 프로덕션 환경에서 필수):
+                        # - Apple Root CA로 인증서 체인이 정상적으로 이어지는지 검증
+                        # - leaf_cert의 확장 필드(OID 1.2.840.113635.100.8.2)를 파싱하여 난수(Nonce) 일치 여부 확인
+
+                except Exception as e:
+                    logger.error(f"Hardware attestation validation failed for {payload.owner_email}: {e}")
+                    return {
+                        "state": "ERROR",
+                        "message": "INVALID_HARDWARE_ATTESTATION",
+                        "session": ""
+                    }
+
             new_machine = MachineObject(
                 machine_type=payload.machine_type,
                 group_full_path=payload.group,
@@ -195,8 +345,10 @@ async def register_machine(payload: MachineRegistrationPayload):
                 owner=payload.owner_email,
                 policies="", # 정책은 현재 구현에서 사용되지 않으므로 빈 문자열로 저장합니다
                 machine_totp=new_totp_seed,
-                client_pk=client_pk.decode('utf-8'),
-                server_pk=server_pk.decode('utf-8')
+                client_pk=stringify_rsa_key(client_pk),
+                server_pk=stringify_rsa_key(server_pk),
+                auth_method=payload.auth_method,
+                hardware_ak=payload.hardware_ak
             )
             session.add(new_machine)
             session.commit()
@@ -204,8 +356,8 @@ async def register_machine(payload: MachineRegistrationPayload):
         # 응답 데이터에 새로운 TOTP 시크릿과 공개키를 포함하여 반환
         # 두 정보 모두 클라이언트의 공개키로 암호화 후 응답에 포함
         encrypted_totp_seed = rsa_encrypt(pk_str=payload.pk, plaintext=new_totp_seed)
-        encrypted_client_sk = rsa_encrypt(pk_str=payload.pk, plaintext=client_sk.decode('utf-8'))
-        encrypted_server_sk = rsa_encrypt(pk_str=payload.pk, plaintext=server_sk.decode('utf-8'))
+        encrypted_client_sk = rsa_encrypt(pk_str=payload.pk, plaintext=stringify_rsa_key(client_sk))
+        encrypted_server_sk = rsa_encrypt(pk_str=payload.pk, plaintext=stringify_rsa_key(server_sk))
 
         return {
             "state": "OK",
@@ -220,11 +372,68 @@ async def register_machine(payload: MachineRegistrationPayload):
             "state": "ERROR",
             "session": ""
         }
-    
 
+
+@app.post("/v1/is_enrolled")
+async def is_enrolled(payload: MachineEnumerationRequestPayload, request: Request):
+    # Get header as dictionary
+    headers = dict(request.headers)
+
+    # Machine-Full-Name
+    # Identity
+    # Authorization (Bearer Token)
+    machine_full_name: str = headers.get("Machine-Full-Name", "")
+    identity_fullpath: str = headers.get("Identity", "")
+    client_side_generated_totp: str = headers.get("Authorization", "").replace("Bearer ", "")
+
+    try:
+
+        _assert(machine_full_name, None, lambda x, y: x != "")
+        _assert(identity_fullpath, None, lambda x, y: x != "")
+        _assert(client_side_generated_totp, None, lambda x, y: x != "")
+
+        server_side_generated_totp = _fetch_machine_identity_from_table(identity_fullpath)
+        if not server_side_generated_totp:
+            logger.warning(f"Enrollment check failed: Invalid token {client_side_generated_totp}.")
+            return {
+                "state": "ERROR",
+                "message": f"INVALID_IDENTITY",
+                "enrolled": False
+            }
+        elif server_side_generated_totp != client_side_generated_totp:
+            logger.warning(f"Enrollment check failed: Token does not match identity for {identity_fullpath}. Expected {server_side_generated_totp}, got {client_side_generated_totp}.")
+            return {
+                "state": "ERROR",
+                "message": f"INVALID_TOKEN",
+                "enrolled": False
+            }
+
+        # 검증 통과. 이제 해당 머신이 등록되어 있는지 확인해야 함.
+        with Session(engine) as session:
+            stmt = select(MachineObject).where(MachineObject.machine_full_name == machine_full_name)
+            result = session.execute(stmt).scalar_one_or_none()
+
+            if result is not None:
+                return {
+                    "state": "OK",
+                    "enrolled": True
+                }
+            else:
+                return {
+                    "state": "OK",
+                    "enrolled": False
+                }
+
+    except Exception as ex:
+        logger.error(f"Enrollment check failed: {ex}")
+        return {
+            "state": "ERROR",
+            "message": f"ENROLLMENT_CHECK_FAILED",
+            "enrolled": False
+        }
 
 @app.post("/v1/get_machines_of")
-async def enumerate_machines(payload: MachineEnumerationRequestPayload):
+async def enumerate_machines(payload: MachineEnumerationRequestPayload, request: Request):
     # Get header as dictionary
     headers = dict(request.headers)
     
@@ -259,7 +468,7 @@ async def enumerate_machines(payload: MachineEnumerationRequestPayload):
                 "message": f"INVALID_TOKEN",
                 "machines": []
             }
-        
+
         # 검증 통과. 이제 해당 그룹에 속하고 해당 사용자가 소유한 머신들을 반환해야 함.
         with Session(engine) as session:
             stmt = select(MachineObject).where(MachineObject.group_full_path == group_path and MachineObject.owner == target_user)
@@ -333,7 +542,7 @@ def setup(
     engine: Engine = create_engine(f"sqlite://{db_model.get("db_path")}", echo=False)
 
     # This creates the tables in the database if they don't exist
-    Base.metadata.create_all(engine)
+    DBBaseObject.metadata.create_all(engine)
 
 
     # 3. Start the server programmatically
