@@ -43,3 +43,8 @@ def write_file_if_not_exists(file_path: str, content: str) -> bool:
     if os.path.exists(file_path):
         return False
     return write_file(file_path, content)
+
+
+def assert_if(expected, actual, operation = lambda x, y: x == y):
+    if not operation(expected, actual):
+        raise ValueError(f"Assertion failed. Expected: {expected}, Actual: {actual}")

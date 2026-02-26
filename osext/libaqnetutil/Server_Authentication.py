@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from fastapi import FastAPI, Request
 from pydantic import BaseModel as BodyPayloadBaseModel
 from keygen import generate_totp_seed, hash_password, generate_totp_result, generate_rsa_keypair, rsa_decrypt, rsa_encrypt, stringify_rsa_key
+from localutil import assert_if
 
 # Configure production-level logging
 logger = logging.getLogger(__name__)
@@ -103,10 +104,6 @@ class MachineEnumerationRequestPayload(BodyPayloadBaseModel):
     owner_email: str
     credentials: str
     user_totp: str
-
-def _assert(expected, actual, operation = lambda x, y: x == y):
-    if not operation(expected, actual):
-        raise ValueError(f"Assertion failed. Expected: {expected}, Actual: {actual}")
 
 def _fetch_machine_identity_from_table(machine_full_name: str) -> str:
     # 데이터베이스 machines 테이블에서 totp 를 불러온 후, 결과를 sha256 으로 다이제스트
@@ -204,7 +201,7 @@ async def register_machine(payload: MachineRegistrationPayload):
     try:
 
         # 네트워크 URL 검증
-        _assert(app.state.domain, payload.network_url)
+        assert_if(app.state.domain, payload.network_url)
 
         # 데이터베이스에서 users 테이블에 등록된 사용자인지 확인
         with Session(engine) as session:
@@ -259,8 +256,8 @@ async def register_machine(payload: MachineRegistrationPayload):
             # 저장하기 전 인증 정보를 새로 발급
 
             new_totp_seed = generate_totp_seed()
-            client_pk, client_sk = generate_rsa_keypair(nosave=True)
-            server_pk, server_sk = generate_rsa_keypair(nosave=True)
+            client_pk, client_sk = generate_rsa_keypair(pk_path=None, sk_path=None)
+            server_pk, server_sk = generate_rsa_keypair(pk_path=None, sk_path=None)
 
             # 하드웨어 증명 검증 로직 (auth_method 가 tpm 이나 apple_se 일 경우)
             # 현재 구현이 불안정하므로 강제로 software 폴백
@@ -390,9 +387,9 @@ async def is_enrolled(payload: MachineEnumerationRequestPayload, request: Reques
 
     try:
 
-        _assert(machine_full_name, None, lambda x, y: x != "")
-        _assert(identity_fullpath, None, lambda x, y: x != "")
-        _assert(client_side_generated_totp, None, lambda x, y: x != "")
+        assert_if(machine_full_name, None, lambda x, y: x != "")
+        assert_if(identity_fullpath, None, lambda x, y: x != "")
+        assert_if(client_side_generated_totp, None, lambda x, y: x != "")
 
         server_side_generated_totp = _fetch_machine_identity_from_table(identity_fullpath)
         if not server_side_generated_totp:
@@ -450,10 +447,10 @@ async def enumerate_machines(payload: MachineEnumerationRequestPayload, request:
 
     # If any of them are missing, return error
     try:
-        _assert(group_path, None, lambda x, y: x != "")
-        _assert(target_user, None, lambda x, y: x != "")
-        _assert(identity_fullpath, None, lambda x, y: x != "")
-        _assert(client_side_generated_totp, None, lambda x, y: x != "")
+        assert_if(group_path, None, lambda x, y: x != "")
+        assert_if(target_user, None, lambda x, y: x != "")
+        assert_if(identity_fullpath, None, lambda x, y: x != "")
+        assert_if(client_side_generated_totp, None, lambda x, y: x != "")
 
         server_side_generated_totp = _fetch_machine_identity_from_table(identity_fullpath)
         if not server_side_generated_totp:
@@ -520,21 +517,21 @@ def setup(
     app.state.server_map = server_map
     app.state.db_model = db_model
 
-    _assert("version", db_model, lambda x, y: x in y)
-    _assert(1, db_model.get("version"), lambda x, y: x == y) # 현재 버전은 1로 고정. 향후 버전업 시 이 부분을 수정하여 호환성 검증 로직을 추가할 수 있습니다.
-    _assert("db_path", db_model, lambda x, y: x in y)
-    _assert(os.path.abspath(db_model.get("db_path")), None, lambda x, y: os.path.isfile(x))
-    _assert(os.path.abspath(policy_file), None, lambda x, y: os.path.isfile(x))
-    _assert("authentication", server_map, lambda x, y: x in y)
-    _assert("url", server_map.get("authentication"), lambda x, y: x in y)
-    _assert("port", server_map.get("authentication"), lambda x, y: x in y)
-    _assert("hold", server_map, lambda x, y: x in y)
-    _assert("url", server_map.get("hold"), lambda x, y: x in y)
-    _assert("port", server_map.get("hold"), lambda x, y: x in y)
-    _assert("relay", server_map, lambda x, y: x in y)
-    _assert("url", server_map.get("relay"), lambda x, y: x in y)
-    _assert("port", server_map.get("relay"), lambda x, y: x in y)
-    _assert([server_map.get("hold").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
+    assert_if("version", db_model, lambda x, y: x in y)
+    assert_if(1, db_model.get("version"), lambda x, y: x == y) # 현재 버전은 1로 고정. 향후 버전업 시 이 부분을 수정하여 호환성 검증 로직을 추가할 수 있습니다.
+    assert_if("db_path", db_model, lambda x, y: x in y)
+    assert_if(os.path.abspath(db_model.get("db_path")), None, lambda x, y: os.path.isfile(x))
+    assert_if(os.path.abspath(policy_file), None, lambda x, y: os.path.isfile(x))
+    assert_if("authentication", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("authentication"), lambda x, y: x in y)
+    assert_if("port", server_map.get("authentication"), lambda x, y: x in y)
+    assert_if("hold", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("hold"), lambda x, y: x in y)
+    assert_if("port", server_map.get("hold"), lambda x, y: x in y)
+    assert_if("relay", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("relay"), lambda x, y: x in y)
+    assert_if("port", server_map.get("relay"), lambda x, y: x in y)
+    assert_if([server_map.get("hold").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
 
     app.state.credentials_table = {} # 토큰과 관련된 정보를 저장하는 테이블.
 
