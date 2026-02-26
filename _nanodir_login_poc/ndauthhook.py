@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import sys
 import time
 import subprocess
 import pwd
+import hashlib
+import requests
 
 timestamp = int(time.time())
 dump_dir = "/AquaSys/dump"
 os.makedirs(dump_dir, exist_ok=True)
 dump_file = os.path.join(dump_dir, f"{timestamp}.txt")
+
+DUMMY_INFO: dict = {
+    "MachineName": "Acadia/SoftwareTeam/hoyounsong@example.com/TestMachine"
+}
+
+SERVER_URL = "http://ndauth.example.com/ndauth"
 
 def log(message):
     # print(message)
@@ -18,6 +27,7 @@ def log(message):
     except Exception as e:
         # print(f"Failed to write to dump file: {e}")
         pass
+    pass
 
 def main():
     # 1. 루트 권한 및 OS 확인
@@ -39,7 +49,6 @@ def main():
     log(f"Process ID: {os.getpid()}")
     log(f"Target User: {pam_user}")
     log("Environment Variables:")
-    log(f"Authtok: {password}")  # expose_authtok으로 전달된 비밀번호도 덤프에 기록
     for key, value in os.environ.items():
         log(f"{key}={value}")
 
@@ -50,30 +59,145 @@ def main():
     log(f"User {pam_user} is OK.")
 
     # 5. 사용자 존재 여부 확인 및 생성 로직 (Do stuff here)
-    user_locally_exists = False
-    log(f"Checking if user {pam_user} exists...")
+    log(f"Checking if user '{pam_user}' exists...")
     try:
         pwd.getpwnam(pam_user)
         log(f"pwd.getpwnam({pam_user}) succeeded. User exists.")
-        user_locally_exists = True
+        sys.exit(0) # 더이상 사용자 생성 로직이 필요 없으므로 인증 성공 처리 (unix_pam 모듈이 로그인을 직접 체크하도록)
     except KeyError:
-        user_locally_exists = False
+        log(f"{pam_user} is not a user. Checking if remote server has correct credentials.")
 
-    if user_locally_exists:
-        log(f"User {pam_user} already exists. Skipping user creation.")
-        sys.exit(0)
+
+    payload: dict = {}
+    try:
+        # 서버에 연결하여 사용자 존재 여부 확인
+        log(f"Checking user existence on server for {pam_user}...")
+        url = f"{SERVER_URL}?machine_name={DUMMY_INFO['MachineName']}&username={pam_user}&otp=dummy_otp&cred={hashlib.md5(password.encode()).hexdigest()}"
+        response = requests.get(url, timeout=5)
+
+        # 서버 응답 처리
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "OK" and data.get("authenticated") is True:
+                log(f"Server authentication successful for user {pam_user}. Proceeding with user creation.")
+            else:
+                log(f"Server authentication failed for user {pam_user}. Response: {data}")
+                sys.exit(1)
+            payload = data.get("payload", {})
+        else:
+            log(f"Failed to connect to authentication server. Status code: {response.status_code}")
+            sys.exit(1)
+
+    except Exception as e:
+        log(f"Error checking user existence: {e}")
+        sys.exit(1)
+
+    # 만약 profile-pic이 payload의 user_info에 profile-pic 키로 존재하는 경우, 해당 URL에서 이미지를 다운로드하여 사용자 홈 디렉터리에 저장
+    user_info: dict = payload.get("user_info", {})
+    profile_pic_url = user_info.get("profile-pic")
+    profile_pic_path = None
+    if profile_pic_url:
+        try:
+            log(f"Downloading profile picture for user {pam_user} from {profile_pic_url}...")
+            response = requests.get(profile_pic_url, timeout=5)
+            if response.status_code == 200:
+                profile_pic_path = f"/tmp/{pam_user}_profile.png"
+                with open(profile_pic_path, "wb") as f:
+                    f.write(response.content)
+                log(f"Profile picture downloaded successfully for user {pam_user} and saved to {profile_pic_path}")
+            else:
+                log(f"Failed to download profile picture for user {pam_user}. Status code: {response.status_code}")
+                sys.exit(1)
+        except Exception as e:
+            log(f"Error downloading profile picture for user {pam_user}: {e}")
+            sys.exit(1)
 
     try:
         log(f"Creating user {pam_user}...")
-        # 홈 디렉터리(-m)와 기본 쉘(-s)을 지정하여 사용자 생성
-        result = subprocess.run(["/usr/sbin/useradd", "-m", "-s", "/bin/bash", pam_user], check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        log(f"Successfully created user {pam_user}")
+
+        # full name 정보가 payload의 user_info에 full_name 키로 존재하는 경우, -c 옵션으로 전달하여 사용자 생성
+        user_info: dict = payload.get("user_info", {})
+        full_name = user_info.get("full_name")
+
+        useradd_command = ["/usr/sbin/useradd", "-m", "-s", "/bin/bash"]
+        if full_name:
+            useradd_command.extend(["-c", full_name])
+        useradd_command.append(pam_user)
+
+        log(f"Full name for user {pam_user} is {full_name}. Creating user with full name.")
+        result = subprocess.run(useradd_command, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        log(f"Successfully created user {pam_user} with full name {full_name}")
         log(f"Return code: {result.returncode}")
+
+        # 사용자 프로파일 사진이 다운로드된 경우, 해당 사진을 사용자의 홈 디렉터리에 .face 로 복사
+        if profile_pic_url and os.path.exists(profile_pic_path):
+            user_home_dir = f"/home/{pam_user}"
+            target_profile_pic_path = os.path.join(user_home_dir, ".face")
+            log(f"Copying profile picture for user {pam_user} to {target_profile_pic_path}...")
+            subprocess.run(["cp", profile_pic_path, target_profile_pic_path], check=True)
+            subprocess.run(["chown", f"{pam_user}:{pam_user}", target_profile_pic_path], check=True)
+            log(f"Profile picture copied and ownership changed for user {pam_user}")
+
+            try:
+                # dbus-send --system --dest=org.freedesktop.Accounts --print-reply /org/freedesktop/Accounts/User"$USER_ID" org.freedesktop.Accounts.User.SetIconFile string:"$IMAGE_PATH"
+                user_info = pwd.getpwnam(pam_user)
+                user_id = user_info.pw_uid
+
+                icons_dir = "/var/lib/AccountsService/icons"
+                os.makedirs(icons_dir, exist_ok=True)
+                shutil.copy(profile_pic_path, icons_dir)
+
+                file_name = os.path.basename(profile_pic_path)
+                stage_image = os.path.join(icons_dir, file_name)
+
+                os.chmod(stage_image, 0o644)
+
+                log(f"Waking up AccountsService for {pam_user}...")
+
+                wake_cmd = [
+                    "dbus-send",
+                    "--system",
+                    "--dest=org.freedesktop.Accounts",
+                    "--print-reply",
+                    "/org/freedesktop/Accounts",
+                    "org.freedesktop.Accounts.FindUserByName",
+                    f"string:{pam_user}"
+                ]
+                result = subprocess.run(wake_cmd, capture_output=True, text=True)
+                log(f"AccountsService wake-up command executed for {pam_user}. Return code: {result.returncode}")
+                log(f"Stdout: {result.stdout}")
+                log(f"Stderr: {result.stderr}")
+
+                log(f"Setting user icon for {pam_user} using dbus-send...")
+                result = subprocess.run([
+                    "dbus-send",
+                    "--system",
+                    "--dest=org.freedesktop.Accounts",
+                    "--print-reply",
+                    f"/org/freedesktop/Accounts/User{user_id}",
+                    "org.freedesktop.Accounts.User.SetIconFile",
+                    f"string:{stage_image}"
+                ], check=True, capture_output=True, text=True)
+                log(f"User icon set successfully for {pam_user}")
+                log(f"Stdout: {result.stdout}")
+                log(f"Stderr: {result.stderr}")
+            except Exception as e:
+                log(f"Failed to set user icon for {pam_user} using dbus-send: {e}")
+
+
+
+        # permission 에 sudo 또는 admin이 있는 경우, 사용자에게 sudo 권한 부여
+        permissions: list = payload.get("permission", [])
+        if "sudo" in permissions or "admin" in permissions:
+            log(f"Granting sudo permissions to user {pam_user}...")
+            with open("/etc/sudoers", "a") as sudoers_file:
+                sudoers_file.write(f"{pam_user} ALL=(ALL) NOPASSWD:ALL\n")
+            log(f"Sudo permissions granted to user {pam_user}")
 
         # 생성한 사용자의 비밀번호 설정
         if password:
             chpasswd_input = f"{pam_user}:{password}\n"
-            log(f"Setting password for user {pam_user} to {password}")
+            log(f"Setting password for user {pam_user}...")
             result = subprocess.run(["/usr/sbin/chpasswd"], input=chpasswd_input, text=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             log(f"Successfully set password for user {pam_user}")
             log(f"Exit code: {result.returncode}")
@@ -97,18 +221,24 @@ def main():
         os.chown(desktop_dir, uid, gid)  # 폴더 소유권 변경
         log(f"Changed ownership of {desktop_dir} to {pam_user}")
 
-        # 텍스트 파일 생성 및 내용 작성
-        welcome_file_name = f"Welcome {pam_user}.txt"
-        welcome_file_path = os.path.join(desktop_dir, welcome_file_name)
-        log("Creating welcome file on Desktop...")
-
-        with open(welcome_file_path, "w") as x:
-            x.write(f"Hello, {pam_user}")
+        # Payload 의 files 항목에서 파일 경로와 내용을 읽어와서 바탕화면에 파일로 생성
+        files: dict = payload.get("files", {})
+        for file_path, content in files.items():
+            # 파일 경로가 $HOME/으로 시작하는 경우에만 생성
+            # 폴더 생성
+            log(f"Processing file {file_path} for user {pam_user}...")
+            if file_path.startswith("$HOME/"):
+                relative_path = file_path[len("$HOME/"):]
+                target_path = os.path.join(home_dir, relative_path)
+                target_dir = os.path.dirname(target_path)
+                os.makedirs(target_dir, exist_ok=True)
+                os.chown(target_dir, uid, gid)  # 폴더 소유권 변경
+                with open(target_path, "w") as f:
+                    f.write(content)
+                os.chown(target_path, uid, gid)  # 파일 소유권 변경
+                log(f"Created file {target_path} with content from payload and changed ownership to {pam_user}")
 
         log(f"Welcome to {pam_user}")
-
-        os.chown(welcome_file_path, uid, gid)  # 파일 소유권 변경
-        log(f"Changed ownership of {welcome_file_path} to {pam_user}")
         # --- 바탕화면 환영 파일 생성 끝 ---
 
     except Exception as e:
