@@ -505,19 +505,17 @@ def setup(
         namespace: str,
         port: int,
         domain: str,
-        subdomain: str,
         allow_ip_access: bool,
         allow_external_access: bool,
         policy_file: str,
         server_map: dict,
         db_model: dict
 ):
-    logger.info(f"Authentication server setup with namespace={namespace}, port={port}, domain={domain}, subdomain={subdomain}, allow_ip_access={allow_ip_access}, allow_external_access={allow_external_access}, policy_file={policy_file}, server_map={server_map}, db_model={db_model}")
+    logger.info(f"Authentication server setup with namespace={namespace}, port={port}, domain={domain}, allow_ip_access={allow_ip_access}, allow_external_access={allow_external_access}, policy_file={policy_file}, server_map={server_map}, db_model={db_model}")
 
     # 1. Store your configuration in the app state so endpoints can access them
     app.state.namespace = namespace
     app.state.domain = domain
-    app.state.subdomain = subdomain
     app.state.policy_file = policy_file
     app.state.server_map = server_map
     app.state.db_model = db_model
@@ -540,7 +538,6 @@ def setup(
 
     app.state.credentials_table = {} # 토큰과 관련된 정보를 저장하는 테이블.
 
-    global engine
     engine: Engine = create_engine(f"sqlite://{db_model.get("db_path")}", echo=False)
 
     # This creates the tables in the database if they don't exist
@@ -559,7 +556,6 @@ if __name__ == "__main__":
         namespace="master",  # 인증 서버가 속할 네임스페이스 이름 (예: "master")
         port=8000,  # 인증 서버가 사용할 포트 번호
         domain="example.com",  # 인증 서버의 도메인 이름. 이 때 Authentication 서버는 xxx.example.com 형태로 서브도메인으로 운영되어야 합니다.
-        subdomain="authentication",  # 인증 서버의 서브도메인 이름
         allow_ip_access=False,  # 인증 서버에 IP 주소로 접근을 허용할지 여부 (True: IP 주소 허용, False: IP 주소로 접근 불허)
         allow_external_access=True,  # 인증 서버에 외부 네트워크에서 접근을 허용할지 여부 (True: 외부 네트워크 허용, False: 내부 네트워크로만 접근 허용)
         policy_file="auth_policy.json",  # 인증 서버가 사용할 정책 파일 경로 (예: "auth_policy.json")
