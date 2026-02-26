@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import serialization
 
 
-def generate_rsa_keypair(private_key_path="server_private_key.pem", public_key_path="server_public_key.pem", nosave=False) -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
+def generate_rsa_keypair(sk_path="server_private_key.pem", pk_path="server_public_key.pem") -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     print("Generating RSA keypair...")
 
     # 1. Generate the private key
@@ -22,8 +22,8 @@ def generate_rsa_keypair(private_key_path="server_private_key.pem", public_key_p
     # 2. Serialize and save the private key (PKCS8 PEM format)
     # Note: We use NoEncryption() here to match the server code's startup sequence.
     # For higher security environments, use serialization.BestAvailableEncryption(b"your_password")
-    if not nosave:
-        with open(private_key_path, "wb") as f:
+    if sk_path:
+        with open(sk_path, "wb") as f:
             f.write(
                 private_key.private_bytes(
                     encoding=serialization.Encoding.PEM,
@@ -36,8 +36,8 @@ def generate_rsa_keypair(private_key_path="server_private_key.pem", public_key_p
     public_key = private_key.public_key()
 
     # 4. Serialize and save the public key (SubjectPublicKeyInfo PEM format)
-    if not nosave:
-        with open(public_key_path, "wb") as f:
+    if pk_path:
+        with open(pk_path, "wb") as f:
             f.write(
                 public_key.public_bytes(
                     encoding=serialization.Encoding.PEM,
@@ -65,6 +65,13 @@ def stringify_rsa_key(key) -> str:
         ).decode('utf-8')
     else:
         raise ValueError("Unsupported key type for stringification")
+
+def destringify_rsa_key(is_public_key: bool, key: str, password: bytes = None) -> rsa.RSAPrivateKey | rsa.RSAPublicKey:
+    if is_public_key:
+        return serialization.load_pem_public_key(key.encode('utf-8'))
+    else:
+        return serialization.load_pem_private_key(key.encode('utf-8'), password=password)
+
 
 def rsa_encrypt(pk_str: str = None, public_key: rsa.RSAPublicKey = None, plaintext: str = "") -> tuple[bool, bytes]:
     if pk_str:
