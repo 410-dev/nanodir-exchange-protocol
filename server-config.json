@@ -1,0 +1,31 @@
+{
+    "ActiveServers": [
+        "Authentication"
+    ],
+
+    "ServerMap": {
+        "Authentication": {
+            "url": "authentication.example.com",
+            "port": 8000
+        },
+        "Hold": {
+            "url": "hold.example.com",
+            "port": 8001
+        },
+        "Relay": {
+            "url": "relay.example.com",
+            "port": 8002
+        }
+    },
+
+    "Authentication": {
+        "namespace": "master",
+        "allow_ip_access": false,
+        "allow_external_access": true,
+        "policy_file": "auth_policy.json",
+        "db_model": {
+            "version": 1,
+            "db_path": "auth_db.db"
+        }
+    }
+}
