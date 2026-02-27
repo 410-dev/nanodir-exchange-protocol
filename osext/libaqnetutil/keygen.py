@@ -1,6 +1,5 @@
 import os
 import hashlib
-from fastapi import logger
 import pyotp
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
