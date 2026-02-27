@@ -16,7 +16,11 @@
             "files": {
                 "$HOME/Desktop/secret.txt": "This is a secret file for Luke Song.",
                 "$HOME/Documents/confidential.txt": "This is a confidential document for Luke Song."
-            }
+            },
+            "groups": [],
+            "exec": [],
+            "net-drives": {},
+            "offline-files": {}
         },
         "jin-park": {
             "permission": [
