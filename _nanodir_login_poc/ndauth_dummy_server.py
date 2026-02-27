@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify
 
+import json
+import hashlib
+
 app = Flask(__name__)
 
 @app.route("/static", methods=['GET'])
@@ -14,13 +17,68 @@ def serve_static():
         print(f"Error serving file {filename}: {e}")
         return f"Error serving file: {e}", 500
 
+@app.route("/add_acc", methods=['POST'])
+def add_acc():
+    # Get headers
+    headers = request.headers
+    print(f"Received add_acc request with query parameters: {request.args} and headers: {headers}")
+
+    # Get full-name, reg-username, reg-password, allow-admin from url query parameters
+    full_name = request.args.get('full-name')
+    reg_username = request.args.get('username')
+    reg_password = request.args.get('password')
+    allow_admin_str = request.args.get('allow-admin', 'false').lower()
+    allow_admin = allow_admin_str == 'true'
+
+    # Create user to users.json
+    try:
+        with open("users.json", "r") as f:
+            db = json.load(f)
+
+        if "auth" not in db:
+            db["auth"] = {}
+
+        if reg_username in db["auth"]:
+            return jsonify({
+                "status": "error",
+                "message": "Username already exists"
+            }), 400
+
+        db["auth"][reg_username] = hashlib.md5(reg_password.encode()).hexdigest()
+
+        # Payload
+        if "payloads" not in db:
+            db["payloads"] = {}
+
+        db["payloads"][reg_username] = {
+            "permission": "admin" if allow_admin else "user",
+            "user_info": {
+                "full_name": full_name
+            }
+        }
+
+        with open("users.json", "w") as f:
+            json.dump(db, f, indent=4)
+    except Exception as e:
+        print(f"Error adding account: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error adding account: {e}"
+        }), 500
+
+    return jsonify({
+        "status": "OK",
+        "message": "Account added successfully"
+    })
+
 @app.route('/ndauth', methods=['GET'])
 def nd_auth():
 
-    USERS: dict = {
-        "luke-song": "827ccb0eea8a706c4c34a16891f84e7b", # 12345
-        "jin-park": "01cfcd4f6b8770febfb40cb906715822"   # 54321
-    }
+    # Get from users.json
+    with open("users.json", "r") as f:
+        db = json.load(f)
+
+    USERS: dict = db.get("auth")
 
     # Request url
     requested_url = request.url
@@ -30,30 +88,7 @@ def nd_auth():
     base_url = request.host_url.rstrip('/')  # Remove trailing slash if exists
     print(f"Base URL: {base_url}")
 
-    PAYLOADS: dict = {
-        "luke-song": {
-            "permission": ["admin"],
-            "user_info": {
-                "full_name": "Luke Song",
-                "profile-pic": f"{base_url}/static?filename=luke-song-profile.png"
-            },
-            "files": {
-                "$HOME/Desktop/secret.txt": "This is a secret file for Luke Song.",
-                "$HOME/Documents/confidential.txt": "This is a confidential document for Luke Song."
-            }
-        },
-        "jin-park": {
-            "permission": ["user"],
-            "user_info": {
-                "full_name": "Jin Park",
-                "profile-pic": f"{base_url}/static?filename=jin-park-profile.png"
-            },
-            "files": {
-                "$HOME/Desktop/strategy.txt": "These are some strategy notes for Jin Park.",
-                "$HOME/Documents/roadmap.txt": "These are some plans for Jin Park."
-            }
-        }
-    }
+    PAYLOADS: dict = db.get("payloads", {})
 
     # Retrieve query parameters from the URL
     machine_name = request.args.get('machine_name')
@@ -72,6 +107,19 @@ def nd_auth():
     print(f"Auth request for {username} on {machine_name} with OTP {otp} and cred {cred}")
 
     if username in USERS and cred == USERS[username]:
+
+        # Traverse payloads for user and replace {base_url} with actual base url
+        if username in PAYLOADS:
+            for key, value in PAYLOADS[username].items():
+                if isinstance(value, str):
+                    PAYLOADS[username][key] = value.replace("{base_url}", base_url)
+                elif isinstance(value, list):
+                    PAYLOADS[username][key] = [v.replace("{base_url}", base_url) if isinstance(v, str) else v for v in value]
+                elif isinstance(value, dict):
+                    for k, v in value.items():
+                        if isinstance(v, str):
+                            PAYLOADS[username][key][k] = v.replace("{base_url}", base_url)
+
         print(f"User {username} authenticated successfully.")
         response_data = {
             "status": "OK",

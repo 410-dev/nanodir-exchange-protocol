@@ -1,0 +1,41 @@
+{
+    "auth": {
+        "luke-song": "827ccb0eea8a706c4c34a16891f84e7b",
+        "jin-park": "01cfcd4f6b8770febfb40cb906715822",
+        "john-appleseed": "202cb962ac59075b964b07152d234b70"
+    },
+    "payloads": {
+        "luke-song": {
+            "permission": [
+                "admin"
+            ],
+            "user_info": {
+                "full_name": "Luke Song",
+                "profile-pic": "{base_url}/static?filename=luke-song-profile.png"
+            },
+            "files": {
+                "$HOME/Desktop/secret.txt": "This is a secret file for Luke Song.",
+                "$HOME/Documents/confidential.txt": "This is a confidential document for Luke Song."
+            }
+        },
+        "jin-park": {
+            "permission": [
+                "user"
+            ],
+            "user_info": {
+                "full_name": "Jin Park",
+                "profile-pic": "{base_url}/static?filename=jin-park-profile.png"
+            },
+            "files": {
+                "$HOME/Desktop/strategy.txt": "These are some strategy notes for Jin Park.",
+                "$HOME/Documents/roadmap.txt": "These are some plans for Jin Park."
+            }
+        },
+        "john-appleseed": {
+            "permission": "admin",
+            "user_info": {
+                "full_name": "John Appleseed"
+            }
+        }
+    }
+}

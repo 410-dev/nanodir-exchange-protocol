@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Management Demo</title>
+    <style>
+        :root {
+            --primary-color: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border-color: #d1d5db;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: var(--text-main);
+        }
+
+        .container {
+            background-color: var(--card-bg);
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+            width: 100%;
+            max-width: 400px;
+            transition: all 0.3s ease;
+        }
+
+        h2 {
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-size: 0.9rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .checkbox-group input {
+            width: 1.1rem;
+            height: 1.1rem;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        button {
+            width: 100%;
+            padding: 0.875rem;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        #error-msg {
+            color: #dc2626;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        /* Hide the registration form initially */
+        #register-container {
+            display: none;
+        }
+
+        .help-text {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="login-container">
+        <h2>Admin Access</h2>
+        <p class="subtitle">Please log in to manage accounts.</p>
+
+        <p id="error-msg">Incorrect username or password.</p>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label for="login-username">Username</label>
+                <input type="text" id="login-username" required placeholder="Hint: admin">
+            </div>
+
+            <div class="form-group">
+                <label for="login-password">Password</label>
+                <input type="password" id="login-password" required placeholder="Hint: admin123">
+            </div>
+
+            <button type="submit">Log In</button>
+        </form>
+    </div>
+
+    <div class="container" id="register-container">
+        <h2>Add Account</h2>
+        <p class="subtitle">Register a new user to the system.</p>
+
+        <form id="register-form">
+            <div class="form-group">
+                <label for="full-name">Full Name</label>
+                <input type="text" id="full-name" required placeholder="John Doe">
+            </div>
+
+            <div class="form-group">
+                <label for="reg-username">Username</label>
+                <input type="text" id="reg-username" required
+                       pattern="[a-z0-9\-]+"
+                       title="Only lowercase letters, numbers, and dashes are allowed."
+                       placeholder="john-doe">
+                <span class="help-text">Lowercase, numbers, and dashes only.</span>
+            </div>
+
+            <div class="form-group">
+                <label for="reg-password">Password</label>
+                <input type="password" id="reg-password" required placeholder="••••••••">
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="allow-admin">
+                <label for="allow-admin">Grant Admin Privileges</label>
+            </div>
+
+            <button type="submit">Create Account</button>
+        </form>
+    </div>
+
+    <script>
+        // DOM Elements
+        const loginContainer = document.getElementById('login-container');
+        const registerContainer = document.getElementById('register-container');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const errorMsg = document.getElementById('error-msg');
+
+        // Hardcoded Admin Credentials
+        const ADMIN_USER = 'admin';
+        const ADMIN_PASS = 'admin123';
+
+        // Handle Login Submission
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault(); // Prevent page reload
+
+            const user = document.getElementById('login-username').value;
+            const pass = document.getElementById('login-password').value;
+
+            if (user === ADMIN_USER && pass === ADMIN_PASS) {
+                // Success: Hide login, show registration
+                errorMsg.style.display = 'none';
+                loginContainer.style.display = 'none';
+                registerContainer.style.display = 'block';
+            } else {
+                // Fail: Show error message
+                errorMsg.style.display = 'block';
+            }
+        });
+
+        // Handle Registration Submission
+        // Handle Registration Submission via API
+        registerForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            // 1. Collect the data from the form
+            const formData = {
+                fullName: document.getElementById('full-name').value,
+                username: document.getElementById('reg-username').value,
+                password: document.getElementById('reg-password').value,
+                allowAdmin: document.getElementById('allow-admin').checked
+            };
+
+            // 2. Define the target URL
+            // This uses a relative path so it works regardless of your domain name
+            const targetUrl = "/add_acc?full-name=" + encodeURIComponent(formData.fullName) +
+                              "&username=" + encodeURIComponent(formData.username) +
+                              "&password=" + encodeURIComponent(formData.password) +
+                              "&allow-admin=" + formData.allowAdmin;
+
+            try {
+                // 3. Send the POST request
+                const response = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                // 4. Handle the server response
+                if (response.ok) {
+                    const result = await response.json();
+                    alert('Account successfully created on the server!');
+                    registerForm.reset();
+                } else {
+                    const errorData = await response.json();
+                    alert('Error: ' + (errorData.message || 'Failed to create account.'));
+                }
+            } catch (error) {
+                console.error('Network error:', error);
+                alert('Could not connect to the server. Please check your connection.');
+            }
+        });
+
+        // Enforce lowercase and dashes only in real-time for the username field
+        const regUsernameInput = document.getElementById('reg-username');
+        regUsernameInput.addEventListener('input', function(e) {
+            // Replace any invalid characters automatically as the user types
+            this.value = this.value.toLowerCase().replace(/[^a-z0-9\-]/g, '');
+        });
+    </script>
+</body>
+</html>
