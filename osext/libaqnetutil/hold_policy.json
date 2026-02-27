@@ -1,0 +1,5 @@
+{
+    "Server.GeneralSettings.UploadDirectory": "./server-storage-emulated",
+    "Server.Security.EnforceE2EE": true,
+    "Server.GeneralSettings.MaxUploadSizeMB": 10240
+} 

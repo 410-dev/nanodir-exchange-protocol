@@ -274,7 +274,7 @@ def setup(
     assert_if("relay", server_map, lambda x, y: x in y)
     assert_if("url", server_map.get("relay"), lambda x, y: x in y)
     assert_if("port", server_map.get("relay"), lambda x, y: x in y)
-    assert_if([server_map.get("hold").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
+    assert_if([server_map.get("hold").get("port"), server_map.get("authentication").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
 
     app.state.credentials_table = {} # 토큰과 관련된 정보를 저장하는 테이블.
 

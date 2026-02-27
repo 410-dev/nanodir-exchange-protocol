@@ -24,32 +24,10 @@ PRIVATE_KEY_PATH: str = None
 ENFORCE_E2EE: bool = False
 MAX_UPLOAD_SIZE_MB: int = 100
 MAX_KEEP_HOURS: int = 24
+SERVER_PRIVATE_KEY = None
 ############################
 
 app = FastAPI(title="Secure File Relay")
-
-
-# --- Security & Cryptography Initialization ---
-
-def load_private_key():
-    """Loads the RSA private key required for decrypting the AES symmetric keys."""
-    try:
-        with open(PRIVATE_KEY_PATH, "rb") as key_file:
-            return serialization.load_pem_private_key(
-                key_file.read(),
-                password=None
-            )
-    except Exception as e:
-        logger.error(f"Failed to load RSA private key: {e}")
-        raise RuntimeError("Server misconfiguration: Cannot load private key.")
-
-
-# Load the key into memory once at startup
-try:
-    SERVER_PRIVATE_KEY = load_private_key()
-except RuntimeError:
-    SERVER_PRIVATE_KEY = None
-    logger.warning("Starting without a valid private key. Decryption will fail.")
 
 
 def verify_identity(authorization: str = Header(None)):
@@ -138,7 +116,14 @@ def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int,
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         calculated_checksum = sha256_hash.hexdigest()
-        if calculated_checksum != checksum:
+
+        global ENFORCE_E2EE
+        if ENFORCE_E2EE:
+            expected_checksum = enc_checksum
+        else:
+            expected_checksum = checksum
+
+        if calculated_checksum != expected_checksum:
             logger.error(f"Checksum mismatch for {target_file_path}: expected {checksum}, got {calculated_checksum}")
             target_file_path.unlink()  # Remove the corrupted file
             raise ValueError("Checksum verification failed after assembly")
@@ -154,7 +139,7 @@ def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int,
 
 @app.post("/upload")
 async def upload_secure_chunk(
-        dest: str,
+        # dest: str,
         request: Request,
         x_chunk_index: int = Header(...),
         x_total_chunks: int = Header(...),
@@ -255,7 +240,7 @@ def setup(
     assert_if("relay", server_map, lambda x, y: x in y)
     assert_if("url", server_map.get("relay"), lambda x, y: x in y)
     assert_if("port", server_map.get("relay"), lambda x, y: x in y)
-    assert_if([server_map.get("hold").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
+    assert_if([server_map.get("authentication").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
 
     # Load policy file
     policy = {}
@@ -277,14 +262,14 @@ def setup(
     UPLOAD_DIR = Path(policy.get("Server.GeneralSettings.UploadDirectory", "/tmp/secure_uploads"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+    global ENFORCE_E2EE
+    ENFORCE_E2EE = policy.get("Server.Security.EnforceE2EE", False)  # False by default for audit
+
     global PRIVATE_KEY_PATH
     PRIVATE_KEY_PATH = policy.get("Server.Security.PrivateKeyPath", "server_private_key.pem")
-    if not os.path.isfile(PRIVATE_KEY_PATH):
+    if not os.path.isfile(PRIVATE_KEY_PATH) and not ENFORCE_E2EE:
         logger.error(f"Private key file not found at specified path: {PRIVATE_KEY_PATH}")
         raise RuntimeError("Server misconfiguration: Private key file is missing.")
-
-    global ENFORCE_E2EE
-    ENFORCE_E2EE = policy.get("Server.Security.EnforceE2EE", False) # False by default for audit
 
     global MAX_UPLOAD_SIZE_MB
     MAX_UPLOAD_SIZE_MB = policy.get("Server.GeneralSettings.MaxUploadSizeMB", 100)
@@ -292,9 +277,21 @@ def setup(
     global MAX_KEEP_HOURS
     MAX_KEEP_HOURS = policy.get("Server.GeneralSettings.MaxKeepHours", 24)
 
+    # Load the key into memory once at startup
+    global SERVER_PRIVATE_KEY
+    try:
+        with open(PRIVATE_KEY_PATH, "rb") as key_file:
+            SERVER_PRIVATE_KEY = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None
+            )
+    except RuntimeError:
+        SERVER_PRIVATE_KEY = None
+        logger.warning("Starting without a valid private key. Decryption will fail.")
+
     # 3. Start the server programmatically
     # Note: Calling this will block the thread it runs on.
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info", workers=4)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
 
 if __name__ == "__main__":
@@ -302,4 +299,31 @@ if __name__ == "__main__":
 
     # Run the server on port 8000.
     # The string "server:app" requires this file to be named server.py
-    uvicorn.run("Server_Hold:app", host="0.0.0.0", port=8000, workers=4)
+    # uvicorn.run("Server_Hold:app", host="0.0.0.0", port=8000, workers=4)
+
+    setup(
+        "master",
+        8002,
+        "example.com",
+        allow_ip_access=False,
+        allow_external_access=True,
+        policy_file="hold_policy.json",
+        server_map={
+            "authentication": {
+                "url": "authentication.example.com",
+                "port": 8000
+            },
+            "relay": {
+                "url": "relay.example.com",
+                "port": 8001
+            },
+            "hold": {
+                "url": "hold.example.com",
+                "port": 8002
+            }
+        },
+        db_model={
+            "version": 1,
+            "db_path": "hold_policy.json" # TODO Remove this, as this is just a placeholder for future database integration. Currently the server operates with file-based policy and does not utilize a database.
+        }
+    )
