@@ -2,6 +2,8 @@ import os
 import logging
 import shutil
 import hashlib
+import json
+from localutil import assert_if
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
@@ -15,11 +17,14 @@ from cryptography.exceptions import InvalidTag
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# TODO Adaptive Configuration
-UPLOAD_DIR = Path("/tmp/secure_uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-PRIVATE_KEY_PATH = os.environ.get("RSA_PRIVATE_KEY_PATH", "server_private_key.pem")
+### SERVER POLICY STATES ###
+UPLOAD_DIR: Path = None
+PRIVATE_KEY_PATH: str = None
+ENFORCE_E2EE: bool = False
+MAX_UPLOAD_SIZE_MB: int = 100
+MAX_KEEP_HOURS: int = 24
+############################
 
 app = FastAPI(title="Secure File Relay")
 
@@ -69,6 +74,11 @@ def sanitize_filename(filename: str) -> str:
 
 # --- Threadpool Worker Functions ---
 
+def write_raw_chunks(payload: bytes, chunk_file_path: Path):
+    """Directly writes raw bytes to disk without decryption (for testing or non-encrypted uploads)."""
+    with open(chunk_file_path, "wb") as f:
+        f.write(payload)
+
 def decrypt_and_write_chunk(payload: bytes, chunk_file_path: Path):
     """
     CPU-bound task to safely decrypt and save the chunk.
@@ -106,7 +116,7 @@ def decrypt_and_write_chunk(payload: bytes, chunk_file_path: Path):
         f.write(plaintext_chunk)
 
 
-def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int, checksum: str):
+def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int, checksum: str, enc_checksum: str):
     """Concatenates all the individual chunks in order to create the final file."""
     try:
         with open(target_file_path, "wb") as final_file:
@@ -142,7 +152,7 @@ def _assemble_file(staging_dir: Path, target_file_path: Path, total_chunks: int,
 
 # --- Core Upload Endpoint ---
 
-@app.post("/{dest:path}")
+@app.post("/upload")
 async def upload_secure_chunk(
         dest: str,
         request: Request,
@@ -150,6 +160,7 @@ async def upload_secure_chunk(
         x_total_chunks: int = Header(...),
         x_original_filename: str = Header(None),
         x_file_sha256: str = Header(None),
+        x_enc_file_sha256: str = Header(None),
         x_session_id: str = Header(None),
         x_destination_h: str = Header(None),
         token: str = Depends(verify_identity)
@@ -176,7 +187,10 @@ async def upload_secure_chunk(
 
         # 2. Offload the heavy decryption and disk I/O to a threadpool worker
         try:
-            await run_in_threadpool(decrypt_and_write_chunk, payload, chunk_file_path)
+            if ENFORCE_E2EE:
+                await run_in_threadpool(write_raw_chunks, payload, chunk_file_path)
+            else:
+                await run_in_threadpool(decrypt_and_write_chunk, payload, chunk_file_path)
         except ValueError as e:
             logger.error(f"Decryption or parsing failed: {e}")
             raise HTTPException(status_code=400, detail="Key decryption or parsing failed")
@@ -195,7 +209,7 @@ async def upload_secure_chunk(
             logger.info(f"All chunks received for {safe_dest}. Assembling file...")
             # Disk I/O for assembly can also be heavy, so we threadpool it
             try:
-                await run_in_threadpool(_assemble_file, staging_dir, target_file_path, x_total_chunks, x_file_sha256)
+                await run_in_threadpool(_assemble_file, staging_dir, target_file_path, x_total_chunks, x_file_sha256, x_enc_file_sha256)
             except RuntimeError:
                 raise HTTPException(status_code=500, detail="Failed to assemble the final file")
 
@@ -208,6 +222,79 @@ async def upload_secure_chunk(
     except Exception as e:
         logger.error(f"Unexpected error processing chunk {x_chunk_index}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error during upload")
+
+def setup(
+        namespace: str,
+        port: int,
+        domain: str,
+        allow_ip_access: bool,
+        allow_external_access: bool,
+        policy_file: str,
+        server_map: dict,
+        db_model: dict
+):
+    logger.info(f"Hold server setup with namespace={namespace}, port={port}, domain={domain}, allow_ip_access={allow_ip_access}, allow_external_access={allow_external_access}, policy_file={policy_file}, server_map={server_map}, db_model={db_model}")
+
+    app.state.namespace = namespace
+    app.state.domain = domain
+    app.state.policy_file = policy_file
+    app.state.server_map = server_map
+    app.state.db_model = db_model
+
+    assert_if("version", db_model, lambda x, y: x in y)
+    assert_if(1, db_model.get("version"), lambda x, y: x == y) # 현재 버전은 1로 고정. 향후 버전업 시 이 부분을 수정하여 호환성 검증 로직을 추가할 수 있습니다.
+    assert_if("db_path", db_model, lambda x, y: x in y)
+    assert_if(os.path.abspath(db_model.get("db_path")), None, lambda x, y: os.path.isfile(x))
+    assert_if(os.path.abspath(policy_file), None, lambda x, y: os.path.isfile(x))
+    assert_if("authentication", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("authentication"), lambda x, y: x in y)
+    assert_if("port", server_map.get("authentication"), lambda x, y: x in y)
+    assert_if("hold", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("hold"), lambda x, y: x in y)
+    assert_if("port", server_map.get("hold"), lambda x, y: x in y)
+    assert_if("relay", server_map, lambda x, y: x in y)
+    assert_if("url", server_map.get("relay"), lambda x, y: x in y)
+    assert_if("port", server_map.get("relay"), lambda x, y: x in y)
+    assert_if([server_map.get("hold").get("port"), server_map.get("relay").get("port")], port, lambda x, y: y not in x) # 인증 서버가 홀드/릴레이 서버와 포트 충돌이 나지 않도록 검증
+
+    # Load policy file
+    policy = {}
+    try:
+        with open(policy_file, "r") as f:
+            app.state.policies = json.load(f)
+            policy = app.state.policies
+    except Exception as e:
+        logger.error(f"Failed to load policy file: {e}")
+        raise RuntimeError("Server misconfiguration: Cannot load policy file.")
+
+    # policy_file_sample = {
+    #     "Server.GeneralSettings.UploadDirectory": "/tmp/secure_uploads",
+    #     "Server.GeneralSettings.MaxUploadSizeMB": 100,
+    #     "Server.Security.EnforceE2EE": True
+    # }
+
+    global UPLOAD_DIR
+    UPLOAD_DIR = Path(policy.get("Server.GeneralSettings.UploadDirectory", "/tmp/secure_uploads"))
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    global PRIVATE_KEY_PATH
+    PRIVATE_KEY_PATH = policy.get("Server.Security.PrivateKeyPath", "server_private_key.pem")
+    if not os.path.isfile(PRIVATE_KEY_PATH):
+        logger.error(f"Private key file not found at specified path: {PRIVATE_KEY_PATH}")
+        raise RuntimeError("Server misconfiguration: Private key file is missing.")
+
+    global ENFORCE_E2EE
+    ENFORCE_E2EE = policy.get("Server.Security.EnforceE2EE", False) # False by default for audit
+
+    global MAX_UPLOAD_SIZE_MB
+    MAX_UPLOAD_SIZE_MB = policy.get("Server.GeneralSettings.MaxUploadSizeMB", 100)
+
+    global MAX_KEEP_HOURS
+    MAX_KEEP_HOURS = policy.get("Server.GeneralSettings.MaxKeepHours", 24)
+
+    # 3. Start the server programmatically
+    # Note: Calling this will block the thread it runs on.
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info", workers=4)
 
 
 if __name__ == "__main__":
