@@ -14,7 +14,7 @@ chown root:root "$ndauthhook"
 
 # Prepend the hook to /etc/pam.d/gdm-password
 pam_file="/etc/pam.d/gdm-password"
-hook_line="auth optional pam_exec.so expose_authtok quiet ${ndauthhook}"
+hook_line="auth required pam_exec.so expose_authtok quiet ${ndauthhook}"
 
 
 if ! grep -Fxq "$hook_line" "$pam_file"; then
