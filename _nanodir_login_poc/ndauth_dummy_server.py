@@ -2,6 +2,9 @@ from flask import Flask, request, jsonify
 
 import json
 import hashlib
+import base64
+import smtplib
+from email.message import EmailMessage
 
 app = Flask(__name__)
 
@@ -27,6 +30,8 @@ def add_acc():
     full_name = request.args.get('full-name')
     reg_username = request.args.get('username')
     reg_password = request.args.get('password')
+    email = request.args.get('email')
+    email = base64.b64decode(email).decode('utf-8')
     allow_admin_str = request.args.get('allow-admin', 'false').lower()
     allow_admin = allow_admin_str == 'true'
 
@@ -65,6 +70,54 @@ def add_acc():
             "status": "error",
             "message": f"Error adding account: {e}"
         }), 500
+
+    print("Account added successfully, sending email notification...")
+
+    msg = EmailMessage()
+    content = f"""This email is sent from AEONS Server.
+    
+Your account is created and active in current AEONS Domain Controller.
+    
+Account Information:
+- Full Name: {full_name}
+- Username: {reg_username}
+- Ownership: {email}
+- Permission: {"Admin" if allow_admin else "User"}
+- Initial Password: {reg_password}
+
+You are now allowed to logon to machines connected AEONS Domain Controller.
+
+You may configure your account information in: https://accounts.acadia.team/ (coming soon)
+    """
+    msg.set_content(content)
+    msg['Subject'] = "AEONS Server DC: New Account Added"
+    msg['From'] = "noreply-aeons@acadia.team"
+    msg['To'] = email
+
+    # Server configuration
+    smtp_server = "smtp.migadu.com"
+    port = 587  # For STARTTLS
+    sender_email = "noreply-aeons@acadia.team"
+    password = "Nahrooter0129!"
+
+    print(f"Connecting to SMTP server {smtp_server} on port {port} to send email to {email}...")
+
+    try:
+        # Create a secure connection and send email
+        print("Establishing connection to SMTP server...")
+        server = smtplib.SMTP(smtp_server, port)
+        print("Connection established, starting TLS...")
+        server.starttls()  # Secure the connection
+        print("TLS established")
+        server.login(sender_email, password)
+        print("Logged in to SMTP server")
+        server.send_message(msg)
+        print("Email sent successfully")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        print("Closing SMTP server connection")
+        server.quit()
 
     return jsonify({
         "status": "OK",
@@ -106,6 +159,20 @@ def nd_auth():
     # Logic placeholder: This is where you'd verify the OTP
     print(f"Auth request for {username} on {machine_name} with OTP {otp} and cred {cred}")
 
+    # If user credentials in the database is "REVOKED", set status to REVOKED and authenticated to False
+    if username in USERS and USERS[username] == "REVOKED":
+        print(f"User {username} is revoked.")
+        response_data = {
+            "status": "REVOKED",
+            "authenticated": False,
+            "user_context": {
+                "machine": machine_name,
+                "user": username
+            },
+            "payload": {}
+        }
+        return jsonify(response_data)
+
     if username in USERS and cred == USERS[username]:
 
         # Traverse payloads for user and replace {base_url} with actual base url
@@ -121,6 +188,7 @@ def nd_auth():
                             PAYLOADS[username][key][k] = v.replace("{base_url}", base_url)
 
         print(f"User {username} authenticated successfully.")
+
         response_data = {
             "status": "OK",
             "authenticated": True,
