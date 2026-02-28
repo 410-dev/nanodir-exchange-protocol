@@ -58,14 +58,19 @@ def main():
         sys.exit(1)  # 사용자 이름이 없으면 인증 실패 처리
     log(f"User {pam_user} is OK.")
 
-    # 5. 사용자 존재 여부 확인 및 생성 로직 (Do stuff here)
+    # 5. 사용자 존재 여부 확인 및 생성 로직
     log(f"Checking if user '{pam_user}' exists...")
-    try:
-        pwd.getpwnam(pam_user)
-        log(f"pwd.getpwnam({pam_user}) succeeded. User exists.")
-        sys.exit(0) # 더이상 사용자 생성 로직이 필요 없으므로 인증 성공 처리 (unix_pam 모듈이 로그인을 직접 체크하도록)
-    except KeyError:
-        log(f"{pam_user} is not a user. Checking if remote server has correct credentials.")
+
+    # 로컬 계정일 경우 (@와 .이 없는 걸로 판단), 시스템의 사용자 계정에서 존재 여부 확인
+    if "@" not in pam_user and "." not in pam_user:
+        log(f"User '{pam_user}' is considered a local account. Checking local user database...")
+        try:
+            pwd.getpwnam(pam_user)
+            log(f"pwd.getpwnam({pam_user}) succeeded. User exists as a local account. Skipping user creation and proceeding with authentication.")
+            sys.exit(0) # 더이상 사용자 생성 로직이 필요 없으므로 인증 성공 처리 (unix_pam 모듈이 로그인을 직접 체크하도록)
+
+        except KeyError:
+            log(f"{pam_user} is not a user. Checking if remote server has correct credentials.")
 
 
     payload: dict = {}
@@ -80,6 +85,20 @@ def main():
             data = response.json()
             if data.get("status") == "OK" and data.get("authenticated") is True:
                 log(f"Server authentication successful for user {pam_user}. Proceeding with user creation.")
+
+            elif data.get("status") == "REVOKED":
+                log(f"User {pam_user} is revoked according to server response. Remove account in the background.")
+
+                # 시스템에 해당 사용자가 존재하는 경우, 사용자 계정을 삭제합니다.
+                try:
+                    pwd.getpwnam(pam_user)  # 사용자 존재 여부 확인
+                    log(f"User {pam_user} exists. Deleting user account...")
+                    subprocess.run(["/usr/sbin/userdel", "-r", pam_user], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    log(f"User {pam_user} deleted successfully.")
+                except KeyError:
+                    log(f"User {pam_user} does not exist. No need to delete.")
+
+                sys.exit(1)
             else:
                 log(f"Server authentication failed for user {pam_user}. Response: {data}")
                 sys.exit(1)
@@ -115,19 +134,29 @@ def main():
     try:
         log(f"Creating user {pam_user}...")
 
-        # full name 정보가 payload의 user_info에 full_name 키로 존재하는 경우, -c 옵션으로 전달하여 사용자 생성
-        user_info: dict = payload.get("user_info", {})
-        full_name = user_info.get("full_name")
+        user_exists = False
+        try:
+            # 시스템의 사용자 계정에서 존재 여부 확인
+            pwd.getpwnam(pam_user)
+            log(f"pwd.getpwnam({pam_user}) succeeded. User exists as a local account. Skipping user creation and proceeding with authentication.")
+            user_exists = True
+        except KeyError:
+            log(f"{pam_user} is not a user. Checking if remote server has correct credentials.")
 
-        useradd_command = ["/usr/sbin/useradd", "-m", "-s", "/bin/bash"]
-        if full_name:
-            useradd_command.extend(["-c", full_name])
-        useradd_command.append(pam_user)
+        if not user_exists:
+            # full name 정보가 payload의 user_info에 full_name 키로 존재하는 경우, -c 옵션으로 전달하여 사용자 생성
+            user_info: dict = payload.get("user_info", {})
+            full_name = user_info.get("full_name")
 
-        log(f"Full name for user {pam_user} is {full_name}. Creating user with full name.")
-        result = subprocess.run(useradd_command, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        log(f"Successfully created user {pam_user} with full name {full_name}")
-        log(f"Return code: {result.returncode}")
+            useradd_command = ["/usr/sbin/useradd", "-m", "-s", "/bin/bash"]
+            if full_name:
+                useradd_command.extend(["-c", full_name])
+            useradd_command.append(pam_user)
+
+            log(f"Full name for user {pam_user} is {full_name}. Creating user with full name.")
+            result = subprocess.run(useradd_command, check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            log(f"Successfully created user {pam_user} with full name {full_name}")
+            log(f"Return code: {result.returncode}")
 
         # 사용자 프로파일 사진이 다운로드된 경우, 해당 사진을 사용자의 홈 디렉터리에 .face 로 복사
         if profile_pic_url and os.path.exists(profile_pic_path):
@@ -193,6 +222,23 @@ def main():
             with open("/etc/sudoers", "a") as sudoers_file:
                 sudoers_file.write(f"{pam_user} ALL=(ALL) NOPASSWD:ALL\n")
             log(f"Sudo permissions granted to user {pam_user}")
+
+        # permission 이 user 인데 suder 파일에 이미 sudo 권한이 있는 경우, 해당 권한 제거
+        elif "user" in permissions:
+            log(f"Ensuring user {pam_user} does not have sudo permissions...")
+
+            with open("/etc/sudoers", "r") as sudoers_file:
+                lines = sudoers_file.readlines()
+                if any(line.strip() == f"{pam_user} ALL=(ALL) NOPASSWD:ALL" for line in lines):
+                    log(f"User {pam_user} currently has sudo permissions. Removing them...")
+
+                    with open("/etc/sudoers", "w") as sudoers_file_w:
+                        for line in lines:
+                            if line.strip() == f"{pam_user} ALL=(ALL) NOPASSWD:ALL":
+                                log(f"Removing sudo permissions for user {pam_user} from /etc/sudoers")
+                                continue  # 이 줄을 건너뛰어 해당 사용자의 sudo 권한 제거
+                            sudoers_file_w.write(line)
+                            log(f"Sudo permissions removed for user {pam_user} if they existed")
 
         # 생성한 사용자의 비밀번호 설정
         if password:
