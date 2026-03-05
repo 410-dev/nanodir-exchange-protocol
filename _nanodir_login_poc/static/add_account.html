@@ -180,6 +180,12 @@
             </div>
 
             <div class="form-group">
+                <label for="email">Email</label>
+                <input type="text" id="email" required placeholder="john-doe@acadia.team">
+                <span class="help-text">Email</span>
+            </div>
+
+            <div class="form-group">
                 <label for="reg-password">Password</label>
                 <input type="password" id="reg-password" required placeholder="••••••••">
             </div>
@@ -228,12 +234,16 @@
         registerForm.addEventListener('submit', async function(e) {
             e.preventDefault();
 
+            // Base64 encode email address
+            emailval = btoa(document.getElementById('email').value);
+
             // 1. Collect the data from the form
             const formData = {
                 fullName: document.getElementById('full-name').value,
                 username: document.getElementById('reg-username').value,
                 password: document.getElementById('reg-password').value,
-                allowAdmin: document.getElementById('allow-admin').checked
+                allowAdmin: document.getElementById('allow-admin').checked,
+                email: emailval
             };
 
             // 2. Define the target URL
@@ -241,6 +251,7 @@
             const targetUrl = "/add_acc?full-name=" + encodeURIComponent(formData.fullName) +
                               "&username=" + encodeURIComponent(formData.username) +
                               "&password=" + encodeURIComponent(formData.password) +
+                              "&email=" + encodeURIComponent(emailval) +
                               "&allow-admin=" + formData.allowAdmin;
 
             try {
